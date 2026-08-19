@@ -2,32 +2,42 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>실시간 다국어 자막 방송</title>
+    <!-- 스마트폰 화면 크기에 딱 맞추는 필수 설정 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>모바일 실시간 통역 프롬프터</title>
     <style>
-        /* 방송 화면 위에 띄우기 좋도록 배경을 투명하게 하고 아래쪽으로 정렬 */
+        /* 스마트폰에서 눈이 편안한 다크 모드 스타일 */
         body {
-            margin: 0; display: flex; flex-direction: column;
-            justify-content: flex-end; align-items: center;
-            height: 100vh; overflow: hidden; padding-bottom: 50px;
-            background-color: transparent;
+            margin: 0; padding: 0;
+            background-color: #1e1e1e; color: #f0f0f0;
+            font-family: sans-serif;
         }
-        #controls { margin-bottom: 20px; }
+        /* 화면 맨 위에 언어 선택 창을 고정 */
+        #header {
+            position: fixed; top: 0; left: 0; width: 100%;
+            background-color: #333; padding: 15px 0;
+            text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+        }
         select {
             padding: 10px; font-size: 16px;
-            border-radius: 5px; cursor: pointer;
+            border-radius: 8px; border: none;
+            background-color: #555; color: white; width: 80%;
         }
-        #subtitle {
-            padding: 15px 30px; border-radius: 10px;
-            font-weight: bold; text-align: center;
-            transition: all 0.3s ease;
+        /* 글자가 차곡차곡 쌓이는 본문 영역 */
+        #scriptBox {
+            margin-top: 80px; padding: 20px;
+            font-size: 22px; line-height: 1.6;
+            padding-bottom: 50px;
         }
+        /* 한 문장이 끝날 때마다 약간의 여백을 줌 */
+        p { margin-bottom: 15px; border-bottom: 1px dashed #444; padding-bottom: 15px; }
     </style>
 </head>
 <body>
-    <!-- 언어 선택 기본 양식 -->
-    <div id="controls">
-        <select id="langSelect">
-            <option value="ko">🇰🇷 한국어</option>
+
+    <div id="header">
+        <select id="langSelect" onchange="clearScreen()">
+            <option value="ko">🇰🇷 한국어 (Korean)</option>
             <option value="en">🇺🇸 English (영어)</option>
             <option value="zh-cn">🇨🇳 中文 (중국어)</option>
             <option value="vi">🇻🇳 Tiếng Việt (베트남어)</option>
@@ -38,37 +48,48 @@
         </select>
     </div>
 
-    <div id="subtitle">자막 대기 중...</div>
+    <div id="scriptBox">
+        <p id="waitingMsg">실시간 통역 대기 중입니다...</p>
+    </div>
 
     <script>
-        function updateSubtitle() {
+        let lastTime = 0;
+
+        // 언어를 바꾸면 기존에 쌓인 다른 언어 글자들을 싹 지워주는 기능
+        function clearScreen() {
+            document.getElementById('scriptBox').innerHTML = '<p id="waitingMsg">언어가 변경되었습니다. 다음 문장을 기다리는 중입니다...</p>';
+        }
+
+        function updatePrompter() {
             fetch("https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/.json")
             .then(res => res.json())
             .then(data => {
-                const subDiv = document.getElementById('subtitle');
-                // 사용자가 선택한 언어값(예: 'ko', 'en')을 가져옴
-                const selectedLang = document.getElementById('langSelect').value;
-                
-                // 선택한 언어의 자막 텍스트 씌우기
-                if(data && data.subtitles && data.subtitles[selectedLang]) {
-                    subDiv.innerText = data.subtitles[selectedLang];
-                }
-
-                // 관리자가 설정한 디자인 입히기
-                if(data && data.style) {
-                    subDiv.style.fontSize = data.style.fontSize;
-                    subDiv.style.color = data.style.color;
+                if(data && data.subtitles && data.subtitles._timestamp !== lastTime) {
+                    lastTime = data.subtitles._timestamp;
                     
-                    let hex = data.style.bgColor.replace('#', '');
-                    let r = parseInt(hex.substring(0,2), 16);
-                    let g = parseInt(hex.substring(2,4), 16);
-                    let b = parseInt(hex.substring(4,6), 16);
-                    subDiv.style.backgroundColor = `rgba(${r}, ${g}, ${b}, ${data.style.bgOpacity})`;
+                    // 현재 선택된 언어 확인
+                    const selectedLang = document.getElementById('langSelect').value;
+                    let newText = data.subtitles[selectedLang];
+                    
+                    if (newText) {
+                        // 대기 메시지가 있다면 삭제
+                        const waitingMsg = document.getElementById('waitingMsg');
+                        if (waitingMsg) waitingMsg.remove();
+
+                        // 새 문장을 맨 아래에 추가
+                        const scriptBox = document.getElementById('scriptBox');
+                        const newLine = document.createElement('p');
+                        newLine.innerText = newText;
+                        scriptBox.appendChild(newLine);
+                        
+                        // 글자가 추가되면 스마트폰 화면을 맨 아래로 자동으로 끌어내림 (자동 스크롤)
+                        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+                    }
                 }
             });
         }
-        // 0.5초마다 파이어베이스 서버의 변경점 확인
-        setInterval(updateSubtitle, 500);
+        // 0.3초마다 파이어베이스 서버 확인
+        setInterval(updatePrompter, 300);
     </script>
 </body>
 </html>
