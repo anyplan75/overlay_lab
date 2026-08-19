@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>방송 자막 디자인 제어판</title>
+</head>
+<body>
+    <h2>방송 자막 실시간 제어판</h2>
+    <label>글자 크기: <input type="range" id="fontSize" min="20" max="150" value="40"></label><br><br>
+    <label>글자 색상: <input type="color" id="color" value="#ffffff"></label><br><br>
+    <label>배경 색상: <input type="color" id="bgColor" value="#000000"></label><br><br>
+    <label>배경 투명도: <input type="range" id="bgOpacity" min="0" max="1" step="0.1" value="0.7"></label><br><br>
+    <button onclick="saveStyle()">스타일 방송으로 전송</button>
+
+    <script>
+        let id = prompt("아이디를 입력하세요");
+        let pw = prompt("비밀번호를 입력하세요");
+        if (id !== "admin" || pw !== "1234") {
+            alert("접근이 거부되었습니다.");
+            document.body.innerHTML = "권한 없음";
+        }
+
+        function saveStyle() {
+            const styleData = {
+                fontSize: document.getElementById('fontSize').value + 'px',
+                color: document.getElementById('color').value,
+                bgColor: document.getElementById('bgColor').value,
+                bgOpacity: document.getElementById('bgOpacity').value
+            };
+
+            fetch("https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/style.json", {
+                method: "PUT",
+                body: JSON.stringify(styleData)
+            }).then(() => alert("방송 화면에 즉시 적용되었습니다."));
+        }
+    </script>
+</body>
+</html>

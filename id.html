@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>Subtitle Bahasa Indonesia</title>
+    <style>
+        /* 조작 버튼이 없으므로 자막만 깔끔하게 아래쪽에 배치됩니다. */
+        body {
+            margin: 0; display: flex; flex-direction: column;
+            justify-content: flex-end; align-items: center;
+            height: 100vh; overflow: hidden; padding-bottom: 50px;
+            background-color: transparent;
+        }
+        #subtitle {
+            padding: 15px 30px; border-radius: 10px;
+            font-weight: bold; text-align: center;
+            transition: all 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <div id="subtitle">Menunggu subtitle bahasa Indonesia...</div>
+
+    <script>
+        // 👉 이 파일이 담당할 언어 코드를 여기에 고정합니다. (영어면 'en', 중국어면 'zh-cn')
+        const currentLang = 'id';
+
+        function updateSubtitle() {
+            fetch("https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/.json")
+            .then(res => res.json())
+            .then(data => {
+                const subDiv = document.getElementById('subtitle');
+                
+                // 고정된 언어(currentLang)의 자막만 가져와서 화면에 씌웁니다.
+                if(data && data.subtitles && data.subtitles[currentLang]) {
+                    subDiv.innerText = data.subtitles[currentLang];
+                }
+
+                // 관리자 페이지(admin.html)에서 바꾼 디자인 실시간 적용
+                if(data && data.style) {
+                    subDiv.style.fontSize = data.style.fontSize;
+                    subDiv.style.color = data.style.color;
+                    
+                    let hex = data.style.bgColor.replace('#', '');
+                    let r = parseInt(hex.substring(0,2), 16);
+                    let g = parseInt(hex.substring(2,4), 16);
+                    let b = parseInt(hex.substring(4,6), 16);
+                    subDiv.style.backgroundColor = `rgba(${r}, ${g}, ${b}, ${data.style.bgOpacity})`;
+                }
+            });
+        }
+        // 0.5초마다 파이어베이스 서버의 변경점 확인
+        setInterval(updateSubtitle, 500);
+    </script>
+</body>
+</html>

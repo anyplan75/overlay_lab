@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>실시간 다국어 자막 방송</title>
+    <style>
+        /* 방송 화면 위에 띄우기 좋도록 배경을 투명하게 하고 아래쪽으로 정렬 */
+        body {
+            margin: 0; display: flex; flex-direction: column;
+            justify-content: flex-end; align-items: center;
+            height: 100vh; overflow: hidden; padding-bottom: 50px;
+            background-color: transparent;
+        }
+        #controls { margin-bottom: 20px; }
+        select {
+            padding: 10px; font-size: 16px;
+            border-radius: 5px; cursor: pointer;
+        }
+        #subtitle {
+            padding: 15px 30px; border-radius: 10px;
+            font-weight: bold; text-align: center;
+            transition: all 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <!-- 언어 선택 기본 양식 -->
+    <div id="controls">
+        <select id="langSelect">
+            <option value="ko">🇰🇷 한국어</option>
+            <option value="en">🇺🇸 English (영어)</option>
+            <option value="zh-cn">🇨🇳 中文 (중국어)</option>
+            <option value="vi">🇻🇳 Tiếng Việt (베트남어)</option>
+            <option value="id">🇮🇩 Bahasa Indonesia (인도네시아어)</option>
+            <option value="ne">🇳🇵 नेपाली (네팔어)</option>
+            <option value="tl">🇵🇭 Tagalog (타갈로그어)</option>
+            <option value="ru">🇷🇺 Русский (러시아어)</option>
+        </select>
+    </div>
+
+    <div id="subtitle">자막 대기 중...</div>
+
+    <script>
+        function updateSubtitle() {
+            fetch("https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/.json")
+            .then(res => res.json())
+            .then(data => {
+                const subDiv = document.getElementById('subtitle');
+                // 사용자가 선택한 언어값(예: 'ko', 'en')을 가져옴
+                const selectedLang = document.getElementById('langSelect').value;
+                
+                // 선택한 언어의 자막 텍스트 씌우기
+                if(data && data.subtitles && data.subtitles[selectedLang]) {
+                    subDiv.innerText = data.subtitles[selectedLang];
+                }
+
+                // 관리자가 설정한 디자인 입히기
+                if(data && data.style) {
+                    subDiv.style.fontSize = data.style.fontSize;
+                    subDiv.style.color = data.style.color;
+                    
+                    let hex = data.style.bgColor.replace('#', '');
+                    let r = parseInt(hex.substring(0,2), 16);
+                    let g = parseInt(hex.substring(2,4), 16);
+                    let b = parseInt(hex.substring(4,6), 16);
+                    subDiv.style.backgroundColor = `rgba(${r}, ${g}, ${b}, ${data.style.bgOpacity})`;
+                }
+            });
+        }
+        // 0.5초마다 파이어베이스 서버의 변경점 확인
+        setInterval(updateSubtitle, 500);
+    </script>
+</body>
+</html>
