@@ -5,10 +5,35 @@
     <title>中文字幕</title>
     <style>
         body { margin: 0; height: 100vh; overflow: hidden; background-color: transparent; font-family: sans-serif; }
-        #container { position: absolute; transition: all 0.5s ease; }
-        .layout-bottom { bottom: 50px; left: 50%; transform: translateX(-50%); width: 80vw; display: flex; justify-content: center; text-align: center; }
-        .layout-left { bottom: 50px; left: 50px; transform: none; width: 40vw; max-height: 90vh; display: flex; flex-direction: column; justify-content: flex-end; text-align: left; }
-        #subtitle { padding: 20px 30px; border-radius: 15px; font-weight: bold; line-height: 1.6; }
+        
+        #container {
+            position: absolute;
+            transition: all 0.3s ease;
+            /* 핵심: 상자 크기가 변해도 위치가 흔들리지 않게 함 */
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* 1. 하단 중앙 모드: 아래쪽 정렬 */
+        .layout-bottom {
+            bottom: 50px; left: 50%; transform: translateX(-50%);
+            width: 80vw;
+            align-items: center; /* 가로 중앙 */
+            justify-content: flex-end; /* 세로 아래쪽 */
+        }
+
+        /* 2. 왼쪽 2/5 모드: 아래쪽 정렬 */
+        .layout-left {
+            bottom: 50px; left: 50px; transform: none;
+            width: 40vw; max-height: 90vh;
+            align-items: flex-start; /* 가로 왼쪽 */
+            justify-content: flex-end; /* 세로 아래쪽 */
+        }
+
+        #subtitle {
+            padding: 20px 30px; border-radius: 15px; font-weight: bold; line-height: 1.6;
+            text-align: center; /* 글자도 중앙으로 */
+        }
     </style>
 </head>
 <body>
