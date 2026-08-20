@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 송출기 (무손실 자연호흡 감지 + 무료번역)</title>
+    <title>예배 송출기 (무중단 버퍼 컷팅)</title>
     <style>
         body { font-family: sans-serif; background: #1e1e1e; color: white; padding: 40px; text-align: center; }
         h1 { color: #4CAF50; }
@@ -17,8 +17,8 @@
 </head>
 <body>
 
-    <h1>🎙️ 무손실 AI 교정 송출기</h1>
-    <p>오디오 짤림 없이 목사님의 자연스러운 호흡에 맞춰 AI 교정과 무료 번역을 진행합니다.</p>
+    <h1>🎙️ 무손실 버퍼 컷팅 송출기</h1>
+    <p>마이크는 절대 멈추지 않고, 텍스트 버퍼에서 문맥을 찾아내어 싹둑 잘라냅니다.</p>
     
     <button id="startBtn" onclick="startBroadcast()">🔴 방송 시작</button>
     <button id="stopBtn" onclick="stopBroadcast()">⏹️ 방송 종료 및 요약 저장</button>
@@ -27,14 +27,22 @@
     <div id="logBox">AI 처리 및 번역 기록이 쌓입니다.</div>
 
     <script>
-        // 👉 여기에 형님의 제미나이 API 키를 넣어주세요.
         const GEMINI_API_KEY = "형님의_API_키를_넣어주세요";
         const FIREBASE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/subtitles.json";
         
         let recognition;
         let isBroadcasting = false;
-        let fullSermonText = "";
+        
+        // 💡 형님의 기획: 마이크를 끄지 않고 관리하는 '거대한 텍스트 임시 바구니'
+        let globalMasterText = "";      // 이전 세션에서 확정된 모든 텍스트
+        let currentSessionFinalText = ""; // 현재 세션에서 확정된 텍스트
+        let processedLength = 0;        // 우리가 가위로 잘라서 번역기로 보낸 글자의 총 길이
+        let globalUnprocessedText = ""; // 아직 잘리지 않고 바구니에 남아있는 실시간 텍스트
+
         let currentSentenceId = Date.now();
+        let fullSermonText = "";
+        let lastSpeechTime = Date.now();
+        let silenceTimer = null;
 
         if (!('webkitSpeechRecognition' in window)) alert("크롬 브라우저 전용입니다!");
         else {
@@ -44,63 +52,79 @@
             recognition.lang = 'ko-KR';
 
             recognition.onresult = function(event) {
+                lastSpeechTime = Date.now();
+                currentSessionFinalText = "";
                 let interimTranscript = "";
-                let finalTranscript = "";
 
-                for (let i = event.resultIndex; i < event.results.length; ++i) {
-                    // 💡 오디오 유실의 주범인 '강제 컷팅'을 없애고, 크롬의 자연 호흡 감지(isFinal)만 사용합니다.
-                    if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript.trim();
+                // 마이크가 듣고 있는 소리를 임시 바구니에 계속 담습니다 (Stop 명령 없음!)
+                for (let i = 0; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) currentSessionFinalText += event.results[i][0].transcript;
                     else interimTranscript += event.results[i][0].transcript;
                 }
 
-                // 1. 한국어 실시간 쏘기 (0.1초 단위 업데이트)
-                let currentKoText = finalTranscript || interimTranscript;
-                if (currentKoText.trim()) {
-                    document.getElementById('realtimeText').innerText = `듣는 중: ${currentKoText}`;
+                // 전체 텍스트에서 '이미 번역기로 보낸 길이(processedLength)'만큼을 빼면, 새로 번역해야 할 텍스트만 남습니다.
+                let currentFullText = globalMasterText + currentSessionFinalText + interimTranscript;
+                globalUnprocessedText = currentFullText.substring(processedLength);
+
+                // 1. 실시간 한국어 송출 (가위로 잘리기 전까지는 화면에 계속 타다닥 찍힙니다)
+                if (globalUnprocessedText.trim()) {
+                    document.getElementById('realtimeText').innerText = `듣는 중: ${globalUnprocessedText.trim()}`;
                     fetch(FIREBASE_URL, {
                         method: "PATCH",
-                        body: JSON.stringify({ ko: { text: currentKoText.trim(), id: currentSentenceId }, _timestamp: Date.now() })
+                        body: JSON.stringify({ ko: { text: globalUnprocessedText.trim(), id: currentSentenceId }, _timestamp: Date.now() })
                     }).catch(e => {});
                 }
 
-                // 2. 크롬이 자연스럽게 문장 종료를 감지했을 때 (호흡을 골랐을 때)
-                if (finalTranscript) {
-                    const sentenceToProcess = finalTranscript;
-                    const idToProcess = currentSentenceId;
+                // 2. 가위치기 (문맥 컷팅)
+                const endings = ["습니다", "합니다", "하십니다", "바랍니다", "축원합니다", "할지어다", "아멘", "까요", "잖아요", "대요", "지요", "네요", "어요", "해요", "입니다", "나이다", "까?", "요?", "다."];
+                
+                let foundCutIndex = -1;
+                for (let ending of endings) {
+                    let idx = globalUnprocessedText.indexOf(ending);
+                    if (idx !== -1) {
+                        let potentialCut = idx + ending.length;
+                        if (foundCutIndex === -1 || potentialCut < foundCutIndex) {
+                            foundCutIndex = potentialCut; // 가장 먼저 나온 어미의 위치를 찾습니다.
+                        }
+                    }
+                }
+
+                // 임시 바구니에서 어미를 발견했다면? 마이크는 내버려 두고 글자만 잘라서 던집니다!
+                if (foundCutIndex !== -1) {
+                    let sentenceToProcess = globalUnprocessedText.substring(0, foundCutIndex).trim();
                     
-                    // 번호표 즉시 교체 (마이크는 1초도 멈추지 않고 계속 다음 말씀을 듣습니다)
-                    currentSentenceId = Date.now();
+                    processedLength += foundCutIndex; // 자른 만큼 기준선을 뒤로 옮깁니다.
+                    globalUnprocessedText = currentFullText.substring(processedLength);
+                    
                     fullSermonText += sentenceToProcess + " ";
+                    let idToProcess = currentSentenceId;
+                    currentSentenceId = Date.now(); // 다음 문장을 위해 새 번호표 발급
                     
-                    // AI 교정과 다국어 통역은 백그라운드로 전송
                     processSentenceAsync(sentenceToProcess, idToProcess);
                 }
             };
 
-            recognition.onerror = function(event) {
-                console.log("마이크 상태 경고: " + event.error);
-            };
-
-            // 💡 15초 제한 등으로 마이크가 진짜 꺼졌을 때만 0.3초 뒤 강제 부활시킵니다.
+            recognition.onerror = function(event) { console.log("마이크 경고: " + event.error); };
+            
+            // 크롬이 15초 제한 등으로 스스로 마이크를 꺼버렸을 때만 작동하는 안전장치
             recognition.onend = function() {
                 if (isBroadcasting) {
-                    setTimeout(() => {
-                        try { recognition.start(); } catch(e) {}
-                    }, 300);
+                    globalMasterText += currentSessionFinalText;
+                    currentSessionFinalText = "";
+                    // 마이크가 꺼지면 0.01초 만에 즉시 다시 켭니다.
+                    setTimeout(() => { try { recognition.start(); } catch(e) {} }, 10);
                 }
             };
         }
 
-        // 백그라운드 AI 교정 및 다국어 무료 번역 공장
         async function processSentenceAsync(text, msgId) {
-            logMessage(`🎤 원본 확정: ${text}`);
+            logMessage(`🎤 잘라낸 원본: ${text}`);
             let correctedKoText = await correctKoreanWithGemini(text);
             logMessage(`✨ AI 교정본: ${correctedKoText}`, true);
             
             const targetLangs = ['en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'];
             let translationPayload = { _timestamp: Date.now() };
 
-            // 💡 여기서 사용되는 fetchTranslation은 100% 무료 구글 우회 통로를 사용합니다.
             await Promise.all(targetLangs.map(async (lang) => {
                 let trans = await fetchTranslation(correctedKoText, lang);
                 translationPayload[lang] = { text: trans, id: msgId };
@@ -110,7 +134,6 @@
             fetch(FIREBASE_URL, { method: "PATCH", body: JSON.stringify(translationPayload) });
         }
 
-        // 제미나이 유료(무료 할당량) API 사용 구간
         async function correctKoreanWithGemini(text) {
             try {
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -122,7 +145,6 @@
             return text;
         }
 
-        // 구글 100% 무료 번역 API 사용 구간 (client=gtx)
         async function fetchTranslation(text, targetLang) {
             try {
                 const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
@@ -132,9 +154,36 @@
             } catch (error) { return text; }
         }
 
-        function startBroadcast() { isBroadcasting = true; fullSermonText = ""; currentSentenceId = Date.now(); recognition.start(); document.getElementById('startBtn').style.display = 'none'; document.getElementById('stopBtn').style.display = 'inline-block'; logMessage("🎙️ 무손실 방송 시작!"); }
+        function startBroadcast() {
+            isBroadcasting = true; fullSermonText = ""; globalMasterText = ""; currentSessionFinalText = ""; processedLength = 0; globalUnprocessedText = ""; currentSentenceId = Date.now();
+            recognition.start(); document.getElementById('startBtn').style.display = 'none'; document.getElementById('stopBtn').style.display = 'inline-block';
+            logMessage("🎙️ 무손실 버퍼 방송 시작!");
+
+            // 💡 3. 침묵 가위치기: 어미가 없더라도 1.5초간 말씀이 멈추면 임시 바구니를 털어서 보냅니다.
+            silenceTimer = setInterval(() => {
+                if (isBroadcasting && (Date.now() - lastSpeechTime > 1500)) {
+                    if (globalUnprocessedText.trim().length > 0) {
+                        let sentenceToProcess = globalUnprocessedText.trim();
+                        processedLength += globalUnprocessedText.length;
+                        
+                        fullSermonText += sentenceToProcess + " ";
+                        let idToProcess = currentSentenceId;
+                        currentSentenceId = Date.now();
+                        globalUnprocessedText = ""; // 바구니 비우기
+                        
+                        processSentenceAsync(sentenceToProcess, idToProcess);
+                    }
+                }
+            }, 500);
+        }
         
-        async function stopBroadcast() { isBroadcasting = false; recognition.stop(); document.getElementById('startBtn').style.display = 'inline-block'; document.getElementById('stopBtn').style.display = 'none'; logMessage("⏹️ 방송 종료. 요약을 시작합니다..."); fetch(FIREBASE_URL, { method: "PUT", body: JSON.stringify({ _timestamp: Date.now() }) }); await generateSummaryFile(); }
+        async function stopBroadcast() {
+            isBroadcasting = false; clearInterval(silenceTimer); recognition.stop();
+            document.getElementById('startBtn').style.display = 'inline-block'; document.getElementById('stopBtn').style.display = 'none';
+            logMessage("⏹️ 방송 종료. 요약을 시작합니다...");
+            fetch(FIREBASE_URL, { method: "PUT", body: JSON.stringify({ _timestamp: Date.now() }) });
+            await generateSummaryFile();
+        }
 
         async function generateSummaryFile() {
             if (!fullSermonText.trim()) return;
