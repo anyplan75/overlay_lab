@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>실시간 예배 송출기 (투-트랙 무지연)</title>
+    <title>실시간 예배 송출기 (AI 문맥 교정 탑재)</title>
     <style>
         body { font-family: sans-serif; background: #1e1e1e; color: white; padding: 40px; text-align: center; }
         h1 { color: #4CAF50; }
@@ -10,37 +10,37 @@
         #startBtn { background-color: #f44336; color: white; }
         #stopBtn { background-color: #2196F3; color: white; display: none; }
         #realtimeText { background: #333; color: #ffeb3b; padding: 15px; border-radius: 8px; font-size: 22px; margin-top: 20px; min-height: 30px; font-weight: bold;}
-        #logBox { background: #000; padding: 20px; border-radius: 8px; height: 300px; overflow-y: auto; margin-top: 20px; text-align: left; line-height: 1.6; }
+        #logBox { background: #000; padding: 20px; border-radius: 8px; height: 300px; overflow-y: auto; margin-top: 20px; text-align: left; line-height: 1.6; font-size: 14px;}
         .ko-text { color: #4CAF50; }
+        .ai-text { color: #00bcd4; font-weight: bold; margin-bottom: 10px;}
     </style>
 </head>
 <body>
 
-    <h1>🎙️ 투-트랙 예배 송출기</h1>
-    <p>한국어는 0.1초 단위 즉시 송출, 외국어는 문맥을 모아서 통역 송출합니다.</p>
+    <h1>🎙️ AI 교정 예배 송출기</h1>
+    <p>한국어 실시간 송출 ➔ 제미나이 문맥 교정 ➔ 다국어 통역 및 덮어씌우기</p>
     
     <button id="startBtn" onclick="startBroadcast()">🔴 방송 시작</button>
     <button id="stopBtn" onclick="stopBroadcast()">⏹️ 방송 종료 및 요약 저장</button>
 
-    <!-- 목사님 말씀이 즉각 찍히는 실시간 모니터링 창 -->
     <div id="realtimeText">대기 중...</div>
-    <div id="logBox">번역 완료 기록이 여기에 쌓입니다.</div>
+    <div id="logBox">AI 교정 및 번역 기록이 여기에 쌓입니다.</div>
 
     <script>
         // 👉 여기에 형님의 제미나이 API 키를 넣어주세요.
-        const GEMINI_API_KEY = "형님의_API_키를_넣어주세요";
+        const GEMINI_API_KEY = "AIzaSyAHkYcv8tZ-NaRH2NBmLdVGQ-PjOOqwsiM";
         const FIREBASE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/subtitles.json";
         
         let recognition;
         let isBroadcasting = false;
         let fullSermonText = "";
+        let currentSentenceId = Date.now();
 
         if (!('webkitSpeechRecognition' in window)) {
             alert("구글 크롬(Chrome) 브라우저에서만 작동합니다!");
         } else {
             recognition = new webkitSpeechRecognition();
             recognition.continuous = true;
-            // 💡 핵심 1: 문장이 안 끝나도 0.1초 단위로 중간 글자를 계속 뽑아냅니다.
             recognition.interimResults = true;
             recognition.lang = 'ko-KR';
 
@@ -56,45 +56,78 @@
                     }
                 }
 
-                // 💡 트랙 1: 한국어 초고속 실시간 송출
+                // 💡 1단계: 목사님 입에서 나오는 즉시 타다닥 뿌려주는 생방송 한국어
                 let currentKoText = finalTranscript || interimTranscript;
                 if (currentKoText.trim()) {
                     document.getElementById('realtimeText').innerText = `듣는 중: ${currentKoText}`;
-                    
-                    // PATCH를 쓰면 외국어 자막은 놔두고 '한국어 자막'만 쏙 바꿉니다.
                     fetch(FIREBASE_URL, {
                         method: "PATCH",
-                        body: JSON.stringify({ ko: currentKoText.trim(), _timestamp: Date.now() })
+                        body: JSON.stringify({
+                            ko: { text: currentKoText.trim(), id: currentSentenceId },
+                            _timestamp: Date.now()
+                        })
                     }).catch(e => {});
                 }
 
-                // 💡 트랙 2: 목사님이 숨을 쉬거나(약 0.5초 침묵) 15초가 되어 문장이 확정되었을 때만 번역!
+                // 💡 2단계: 문장이 끝났을 때 제미나이에게 교정을 맡김
                 if (finalTranscript) {
-                    fullSermonText += finalTranscript + " ";
-                    logMessage(`🇰🇷 확정 문장: ${finalTranscript}`);
+                    document.getElementById('realtimeText').innerText = "AI 문맥 교정 및 번역 중... ⏳";
+                    logMessage(`🎤 원본 인식: ${finalTranscript}`);
                     
+                    // 인공지능이 오탈자를 잡고 문맥을 부드럽게 고칩니다.
+                    let correctedKoText = await correctKoreanWithGemini(finalTranscript);
+                    logMessage(`✨ AI 교정본: ${correctedKoText}`, true);
+                    
+                    fullSermonText += correctedKoText + " ";
+                    
+                    // 💡 3단계: 교정된 문장을 바탕으로 7개국어 완벽 통역
                     const targetLangs = ['en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'];
                     let translationPayload = { _timestamp: Date.now() };
 
-                    // 7개국어 번역을 동시에 돌립니다
                     await Promise.all(targetLangs.map(async (lang) => {
-                        translationPayload[lang] = await fetchTranslation(finalTranscript, lang);
+                        let trans = await fetchTranslation(correctedKoText, lang);
+                        translationPayload[lang] = { text: trans, id: currentSentenceId };
                     }));
 
-                    // 번역이 완료되면 '외국어 자막들'만 한꺼번에 바꿔줍니다.
+                    // 다국어 통역과 함께, 기존에 띄워둔 투박한 한국어 원본도 '교정본'으로 예쁘게 덮어씌웁니다!
+                    translationPayload['ko'] = { text: correctedKoText, id: currentSentenceId };
+
                     fetch(FIREBASE_URL, {
                         method: "PATCH",
                         body: JSON.stringify(translationPayload)
                     });
                     
-                    logMessage(`🌐 통역 자막 송출 완료`);
                     document.getElementById('realtimeText').innerText = "대기 중...";
+                    currentSentenceId = Date.now();
                 }
             };
 
             recognition.onend = function() {
                 if (isBroadcasting) recognition.start();
             };
+        }
+
+        // 🧠 제미나이 실시간 문맥 교정 기능
+        async function correctKoreanWithGemini(text) {
+            try {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+                const prompt = `다음은 예배 설교 중 실시간으로 음성 인식된 텍스트입니다. 오탈자와 띄어쓰기를 문맥에 맞게 교정해주세요. 번역이나 부연 설명은 절대 하지 말고 오직 '교정된 한국어 문장' 하나만 결과로 출력하세요.\n\n[원본]: ${text}`;
+                
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                });
+                const result = await response.json();
+                
+                if (result.candidates && result.candidates.length > 0) {
+                    return result.candidates[0].content.parts[0].text.trim();
+                }
+            } catch (error) {
+                console.error("교정 실패:", error);
+            }
+            // 💡 에러가 나거나 딜레이가 심하면 안전하게 원본을 그대로 뱉어냅니다 (폴백).
+            return text;
         }
 
         async function fetchTranslation(text, targetLang) {
@@ -109,17 +142,17 @@
         }
 
         function startBroadcast() {
-            isBroadcasting = true; fullSermonText = ""; recognition.start();
+            isBroadcasting = true; fullSermonText = ""; currentSentenceId = Date.now(); recognition.start();
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'inline-block';
-            logMessage("🎙️ 투-트랙 방송 시작!");
+            logMessage("🎙️ AI 교정 투-트랙 방송 시작!");
         }
 
         async function stopBroadcast() {
             isBroadcasting = false; recognition.stop();
             document.getElementById('startBtn').style.display = 'inline-block';
             document.getElementById('stopBtn').style.display = 'none';
-            logMessage("⏹️ 방송 종료. 요약을 시작합니다...");
+            logMessage("⏹️ 방송 종료. 전체 설교 요약을 시작합니다...");
             fetch(FIREBASE_URL, { method: "PUT", body: JSON.stringify({ _timestamp: Date.now() }) });
             await generateSummaryFile();
         }
@@ -145,9 +178,10 @@
             }
         }
 
-        function logMessage(msg) {
+        function logMessage(msg, isAi = false) {
             const box = document.getElementById('logBox');
-            box.innerHTML += `<div class="ko-text">${msg}</div>`;
+            const className = isAi ? 'ai-text' : 'ko-text';
+            box.innerHTML += `<div class="${className}">${msg}</div>`;
             box.scrollTop = box.scrollHeight;
         }
     </script>
