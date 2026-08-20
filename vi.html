@@ -11,7 +11,7 @@
     </div>
     <script>
         const currentLang = 'vi';
-        let lastTime = 0, lastId = 0, subtitleLines = [], maxLines = 2;
+        let lastTime = 0, subtitleLines = [], maxLines = 2;
         
         function updateSubtitle() {
             fetch("https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/.json")
@@ -23,9 +23,10 @@
                     lastTime = d.subtitles._timestamp; let n = d.subtitles[currentLang];
                     if (n) {
                         let text = typeof n === 'object' ? n.text : n; let msgId = typeof n === 'object' ? n.id : lastTime;
-                        if (msgId !== lastId) { lastId = msgId; subtitleLines.push(text); while (subtitleLines.length > maxLines) subtitleLines.shift(); }
-                        else { if (subtitleLines.length > 0) subtitleLines[subtitleLines.length - 1] = text; else subtitleLines.push(text); }
-                        s.innerHTML = subtitleLines.join('<br>');
+                        let existingIndex = subtitleLines.findIndex(line => line.id === msgId);
+                        if (existingIndex !== -1) { subtitleLines[existingIndex].text = text; }
+                        else { subtitleLines.push({id: msgId, text: text}); while (subtitleLines.length > maxLines) subtitleLines.shift(); }
+                        s.innerHTML = subtitleLines.map(line => line.text).join('<br>');
                     }
                 }
                 if (d && d.style) {

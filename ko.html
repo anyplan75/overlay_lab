@@ -11,49 +11,27 @@
     </div>
     <script>
         const currentLang = 'ko';
-        let lastTime = 0, lastId = 0, subtitleLines = [], maxLines = 2;
+        let lastTime = 0, subtitleLines = [], maxLines = 2;
         
         function updateSubtitle() {
             fetch("https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/.json")
             .then(r => r.json())
             .then(d => {
-                const c = document.getElementById('container');
-                const s = document.getElementById('subtitle');
-                
-                if (d && d.style && d.style.layout) {
-                    c.className = 'layout-' + d.style.layout;
-                    maxLines = (d.style.layout === 'left' || d.style.layout === 'right') ? 10 : 2;
-                }
-                
+                const c = document.getElementById('container'), s = document.getElementById('subtitle');
+                if (d && d.style && d.style.layout) { c.className = 'layout-' + d.style.layout; maxLines = (d.style.layout === 'left' || d.style.layout === 'right') ? 10 : 2; }
                 if (d && d.subtitles && d.subtitles._timestamp !== lastTime) {
-                    lastTime = d.subtitles._timestamp;
-                    let n = d.subtitles[currentLang];
-                    
+                    lastTime = d.subtitles._timestamp; let n = d.subtitles[currentLang];
                     if (n) {
-                        let text = typeof n === 'object' ? n.text : n;
-                        let msgId = typeof n === 'object' ? n.id : lastTime;
-                        
-                        if (msgId !== lastId) {
-                            lastId = msgId;
-                            subtitleLines.push(text);
-                            while (subtitleLines.length > maxLines) subtitleLines.shift();
-                        } else {
-                            if (subtitleLines.length > 0) {
-                                subtitleLines[subtitleLines.length - 1] = text;
-                            } else {
-                                subtitleLines.push(text);
-                            }
-                        }
-                        s.innerHTML = subtitleLines.join('<br>');
+                        let text = typeof n === 'object' ? n.text : n; let msgId = typeof n === 'object' ? n.id : lastTime;
+                        let existingIndex = subtitleLines.findIndex(line => line.id === msgId);
+                        if (existingIndex !== -1) { subtitleLines[existingIndex].text = text; }
+                        else { subtitleLines.push({id: msgId, text: text}); while (subtitleLines.length > maxLines) subtitleLines.shift(); }
+                        s.innerHTML = subtitleLines.map(line => line.text).join('<br>');
                     }
                 }
-                
                 if (d && d.style) {
-                    s.style.fontSize = d.style.fontSize;
-                    s.style.color = d.style.color;
-                    s.style.textAlign = d.style.align || 'left';
-                    let h = d.style.bgColor.replace('#', '');
-                    let r = parseInt(h.substring(0,2), 16), g = parseInt(h.substring(2,4), 16), b = parseInt(h.substring(4,6), 16);
+                    s.style.fontSize = d.style.fontSize; s.style.color = d.style.color; s.style.textAlign = d.style.align || 'left';
+                    let h = d.style.bgColor.replace('#', ''), r = parseInt(h.substring(0,2), 16), g = parseInt(h.substring(2,4), 16), b = parseInt(h.substring(4,6), 16);
                     s.style.backgroundColor = `rgba(${r}, ${g}, ${b}, ${d.style.bgOpacity})`;
                 }
             });

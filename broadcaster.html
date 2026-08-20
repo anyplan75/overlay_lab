@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>실시간 예배 송출기 (AI 문맥 교정 탑재)</title>
+    <title>실시간 예배 송출기 (AI 백그라운드 교정)</title>
     <style>
         body { font-family: sans-serif; background: #1e1e1e; color: white; padding: 40px; text-align: center; }
         h1 { color: #4CAF50; }
@@ -17,18 +17,17 @@
 </head>
 <body>
 
-    <h1>🎙️ AI 교정 예배 송출기</h1>
-    <p>한국어 실시간 송출 ➔ 제미나이 문맥 교정 ➔ 다국어 통역 및 덮어씌우기</p>
+    <h1>🎙️ 논스톱 AI 교정 송출기</h1>
+    <p>마이크는 절대 멈추지 않고, AI 교정은 백그라운드에서 조용히 처리됩니다.</p>
     
     <button id="startBtn" onclick="startBroadcast()">🔴 방송 시작</button>
     <button id="stopBtn" onclick="stopBroadcast()">⏹️ 방송 종료 및 요약 저장</button>
 
     <div id="realtimeText">대기 중...</div>
-    <div id="logBox">AI 교정 및 번역 기록이 여기에 쌓입니다.</div>
+    <div id="logBox">AI 처리 기록이 쌓입니다.</div>
 
     <script>
-        // 👉 여기에 형님의 제미나이 API 키를 넣어주세요.
-        const GEMINI_API_KEY = "AIzaSyAHkYcv8tZ-NaRH2NBmLdVGQ-PjOOqwsiM";
+        const GEMINI_API_KEY = "형님의_API_키를_넣어주세요";
         const FIREBASE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/subtitles.json";
         
         let recognition;
@@ -36,97 +35,75 @@
         let fullSermonText = "";
         let currentSentenceId = Date.now();
 
-        if (!('webkitSpeechRecognition' in window)) {
-            alert("구글 크롬(Chrome) 브라우저에서만 작동합니다!");
-        } else {
+        if (!('webkitSpeechRecognition' in window)) alert("크롬 브라우저 전용입니다!");
+        else {
             recognition = new webkitSpeechRecognition();
             recognition.continuous = true;
             recognition.interimResults = true;
             recognition.lang = 'ko-KR';
 
-            recognition.onresult = async function(event) {
+            recognition.onresult = function(event) {
                 let interimTranscript = "";
                 let finalTranscript = "";
 
                 for (let i = event.resultIndex; i < event.results.length; ++i) {
-                    if (event.results[i].isFinal) {
-                        finalTranscript += event.results[i][0].transcript.trim();
-                    } else {
-                        interimTranscript += event.results[i][0].transcript;
-                    }
+                    if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript.trim();
+                    else interimTranscript += event.results[i][0].transcript;
                 }
 
-                // 💡 1단계: 목사님 입에서 나오는 즉시 타다닥 뿌려주는 생방송 한국어
+                // 💡 1. 0.1초 단위 한국어 실시간 쏘기 (절대 안 멈춤)
                 let currentKoText = finalTranscript || interimTranscript;
                 if (currentKoText.trim()) {
                     document.getElementById('realtimeText').innerText = `듣는 중: ${currentKoText}`;
                     fetch(FIREBASE_URL, {
                         method: "PATCH",
-                        body: JSON.stringify({
-                            ko: { text: currentKoText.trim(), id: currentSentenceId },
-                            _timestamp: Date.now()
-                        })
+                        body: JSON.stringify({ ko: { text: currentKoText.trim(), id: currentSentenceId }, _timestamp: Date.now() })
                     }).catch(e => {});
                 }
 
-                // 💡 2단계: 문장이 끝났을 때 제미나이에게 교정을 맡김
+                // 💡 2. 문장이 끝나면?
                 if (finalTranscript) {
-                    document.getElementById('realtimeText').innerText = "AI 문맥 교정 및 번역 중... ⏳";
-                    logMessage(`🎤 원본 인식: ${finalTranscript}`);
+                    const sentenceToProcess = finalTranscript;
+                    const idToProcess = currentSentenceId;
                     
-                    // 인공지능이 오탈자를 잡고 문맥을 부드럽게 고칩니다.
-                    let correctedKoText = await correctKoreanWithGemini(finalTranscript);
-                    logMessage(`✨ AI 교정본: ${correctedKoText}`, true);
-                    
-                    fullSermonText += correctedKoText + " ";
-                    
-                    // 💡 3단계: 교정된 문장을 바탕으로 7개국어 완벽 통역
-                    const targetLangs = ['en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'];
-                    let translationPayload = { _timestamp: Date.now() };
-
-                    await Promise.all(targetLangs.map(async (lang) => {
-                        let trans = await fetchTranslation(correctedKoText, lang);
-                        translationPayload[lang] = { text: trans, id: currentSentenceId };
-                    }));
-
-                    // 다국어 통역과 함께, 기존에 띄워둔 투박한 한국어 원본도 '교정본'으로 예쁘게 덮어씌웁니다!
-                    translationPayload['ko'] = { text: correctedKoText, id: currentSentenceId };
-
-                    fetch(FIREBASE_URL, {
-                        method: "PATCH",
-                        body: JSON.stringify(translationPayload)
-                    });
-                    
-                    document.getElementById('realtimeText').innerText = "대기 중...";
+                    // 핵심 수정: 인공지능을 기다리지 않고, 당장 다음 문장을 위해 번호표부터 바꿉니다! (마이크 해방)
                     currentSentenceId = Date.now();
+                    fullSermonText += sentenceToProcess + " ";
+                    
+                    // 교정과 번역은 백그라운드(뒷단)로 던져버립니다.
+                    processSentenceAsync(sentenceToProcess, idToProcess);
                 }
             };
 
-            recognition.onend = function() {
-                if (isBroadcasting) recognition.start();
-            };
+            recognition.onend = function() { if (isBroadcasting) recognition.start(); };
         }
 
-        // 🧠 제미나이 실시간 문맥 교정 기능
+        // 🧠 마이크와 완벽히 분리된 백그라운드 AI 처리 공장
+        async function processSentenceAsync(text, msgId) {
+            logMessage(`🎤 원본: ${text}`);
+            let correctedKoText = await correctKoreanWithGemini(text);
+            logMessage(`✨ 교정완료: ${correctedKoText}`, true);
+            
+            const targetLangs = ['en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'];
+            let translationPayload = { _timestamp: Date.now() };
+
+            await Promise.all(targetLangs.map(async (lang) => {
+                let trans = await fetchTranslation(correctedKoText, lang);
+                translationPayload[lang] = { text: trans, id: msgId };
+            }));
+
+            translationPayload['ko'] = { text: correctedKoText, id: msgId };
+            fetch(FIREBASE_URL, { method: "PATCH", body: JSON.stringify(translationPayload) });
+        }
+
         async function correctKoreanWithGemini(text) {
             try {
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-                const prompt = `다음은 예배 설교 중 실시간으로 음성 인식된 텍스트입니다. 오탈자와 띄어쓰기를 문맥에 맞게 교정해주세요. 번역이나 부연 설명은 절대 하지 말고 오직 '교정된 한국어 문장' 하나만 결과로 출력하세요.\n\n[원본]: ${text}`;
-                
-                const response = await fetch(url, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-                });
+                const prompt = `예배 설교 중 음성 인식된 텍스트입니다. 오탈자와 띄어쓰기를 문맥에 맞게 교정해주세요. 부연 설명 없이 '교정된 한국어 문장'만 결과로 출력하세요.\n\n[원본]: ${text}`;
+                const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
                 const result = await response.json();
-                
-                if (result.candidates && result.candidates.length > 0) {
-                    return result.candidates[0].content.parts[0].text.trim();
-                }
-            } catch (error) {
-                console.error("교정 실패:", error);
-            }
-            // 💡 에러가 나거나 딜레이가 심하면 안전하게 원본을 그대로 뱉어냅니다 (폴백).
+                if (result.candidates && result.candidates.length > 0) return result.candidates[0].content.parts[0].text.trim();
+            } catch (error) {}
             return text;
         }
 
@@ -136,54 +113,27 @@
                 const response = await fetch(url);
                 const data = await response.json();
                 return data[0].map(item => item[0]).join("");
-            } catch (error) {
-                return text;
-            }
+            } catch (error) { return text; }
         }
 
-        function startBroadcast() {
-            isBroadcasting = true; fullSermonText = ""; currentSentenceId = Date.now(); recognition.start();
-            document.getElementById('startBtn').style.display = 'none';
-            document.getElementById('stopBtn').style.display = 'inline-block';
-            logMessage("🎙️ AI 교정 투-트랙 방송 시작!");
-        }
-
-        async function stopBroadcast() {
-            isBroadcasting = false; recognition.stop();
-            document.getElementById('startBtn').style.display = 'inline-block';
-            document.getElementById('stopBtn').style.display = 'none';
-            logMessage("⏹️ 방송 종료. 전체 설교 요약을 시작합니다...");
-            fetch(FIREBASE_URL, { method: "PUT", body: JSON.stringify({ _timestamp: Date.now() }) });
-            await generateSummaryFile();
-        }
+        function startBroadcast() { isBroadcasting = true; fullSermonText = ""; currentSentenceId = Date.now(); recognition.start(); document.getElementById('startBtn').style.display = 'none'; document.getElementById('stopBtn').style.display = 'inline-block'; logMessage("🎙️ 논스톱 방송 시작!"); }
+        
+        async function stopBroadcast() { isBroadcasting = false; recognition.stop(); document.getElementById('startBtn').style.display = 'inline-block'; document.getElementById('stopBtn').style.display = 'none'; logMessage("⏹️ 방송 종료. 요약을 시작합니다..."); fetch(FIREBASE_URL, { method: "PUT", body: JSON.stringify({ _timestamp: Date.now() }) }); await generateSummaryFile(); }
 
         async function generateSummaryFile() {
             if (!fullSermonText.trim()) return;
             const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
             const prompt = `아래 예배 설교를 서론-본론-결론 소제목을 달아 완벽한 요약 문서로 만들어줘.\n\n[설교 원본]\n${fullSermonText}`;
-
             try {
                 const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
                 const result = await response.json();
                 let finalSummary = result.candidates ? result.candidates[0].content.parts[0].text : `[오류]\n${fullSermonText}`;
-                
-                const blob = new Blob([finalSummary], { type: 'text/plain' });
-                const link = document.createElement("a");
-                link.href = URL.createObjectURL(blob);
-                const now = new Date();
-                link.download = `설교요약_${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()}_${now.getHours()}-${now.getMinutes()}.txt`;
-                link.click();
-            } catch (error) {
-                logMessage(`❌ 요약 오류: ${error}`);
-            }
+                const blob = new Blob([finalSummary], { type: 'text/plain' }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob);
+                const now = new Date(); link.download = `설교요약_${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()}_${now.getHours()}-${now.getMinutes()}.txt`; link.click();
+            } catch (error) { logMessage(`❌ 요약 오류: ${error}`); }
         }
 
-        function logMessage(msg, isAi = false) {
-            const box = document.getElementById('logBox');
-            const className = isAi ? 'ai-text' : 'ko-text';
-            box.innerHTML += `<div class="${className}">${msg}</div>`;
-            box.scrollTop = box.scrollHeight;
-        }
+        function logMessage(msg, isAi = false) { const box = document.getElementById('logBox'); box.innerHTML += `<div class="${isAi ? 'ai-text' : 'ko-text'}">${msg}</div>`; box.scrollTop = box.scrollHeight; }
     </script>
 </body>
 </html>
