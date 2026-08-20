@@ -1,8 +1,5 @@
 @charset "UTF-8";
 
-/* =========================================
-   1. 송출기(Broadcaster) 및 어드민 기본 꾸밈
-   ========================================= */
 body { font-family: 'Malgun Gothic', sans-serif; background: #1e1e1e; color: white; padding: 20px; margin: 0; }
 h1 { color: #4CAF50; text-align: center; }
 .btn { padding: 15px 30px; font-size: 18px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; margin: 10px; }
@@ -11,23 +8,19 @@ h1 { color: #4CAF50; text-align: center; }
 #stopBtn { background-color: #2196F3; color: white; display: none; }
 #realtimeText { background: #333; color: #ffeb3b; padding: 15px; border-radius: 8px; font-size: 22px; margin-top: 20px; font-weight: bold; text-align: center; }
 
-/* =========================================
-   2. 수신기 (ru.html, id.html 등 OBS 화면) 전용 꾸밈
-   ========================================= */
-/* OBS 송출 화면일 경우 배경 투명화 및 여백 제거 */
+/* 방송용 수신기 화면 투명 설정 */
 body:has(#container) { background: transparent; padding: 0; overflow: hidden; }
 
-/* 💡 위치를 잃어버렸던 컨테이너 설정 복원 */
+/* 💡 화면을 무조건 100% 덮고 Flexbox로 내부 상자 위치만 옮깁니다 */
 #container {
     position: absolute; width: 100vw; height: 100vh; display: flex;
     box-sizing: border-box; padding: 40px; pointer-events: none;
 }
 
-/* 💡 형님이 가장 필요로 하셨던 화면 위치(위, 아래, 좌, 우) 제어 클래스 복원 */
-.layout-bottom { align-items: flex-end; justify-content: center; }
-.layout-top { align-items: flex-start; justify-content: center; }
-.layout-left { align-items: center; justify-content: flex-start; width: 40vw !important; }
-.layout-right { align-items: center; justify-content: flex-end; width: 40vw !important; margin-left: auto; }
+.layout-bottom { justify-content: center; align-items: flex-end; }
+.layout-top { justify-content: center; align-items: flex-start; }
+.layout-left { justify-content: flex-start; align-items: center; }
+.layout-right { justify-content: flex-end; align-items: center; }
 
 #subtitle {
     text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
@@ -36,7 +29,9 @@ body:has(#container) { background: transparent; padding: 0; overflow: hidden; }
     line-height: 1.5;
     font-weight: bold;
     display: inline-block;
+    max-width: 90vw; /* 기본 넓이 */
 }
 
-/* 자막이 여러 줄일 때 원래처럼 밑에서 위로 쌓이게 만듭니다 */
-.layout-bottom #subtitle { display: flex; flex-direction: column; justify-content: flex-end; }
+/* 💡 좌측/우측 배치 시 목사님 화면 확보를 위해 자막 영역을 40%로 제한합니다 */
+.layout-left #subtitle, .layout-right #subtitle { max-width: 40vw; }
+.layout-bottom #subtitle, .layout-top #subtitle { display: flex; flex-direction: column; justify-content: flex-end; }

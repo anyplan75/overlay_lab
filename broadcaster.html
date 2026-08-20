@@ -81,21 +81,17 @@
                     saveTextToFile('temp_live.txt', liveText);
                 }
 
-                let match = unprocessedText.match(/(다|나|까|요|습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서)($|\s|[\.\,\?\!])/);
+                // 💡 무한 루프 버그 해결: 문장 처음부터 최소 3글자 이후에 등장하는 첫 번째 '끝맺음말'을 찾아 즉시 자릅니다!
+                let match = unprocessedText.match(/^(.{3,}?)(다|나|까|요|습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서)($|\s|[\.\,\?\!])/);
                 
-                // 💡 인공지능이 문맥을 파악할 수 있도록, 15자 미만의 너무 짧은 토막에서는 자르지 않고 더 모읍니다!
-                if (match && match.index < 15) {
-                    match = null;
-                }
-
                 if (!match && unprocessedText.length > 150) {
                     let lastSpace = unprocessedText.lastIndexOf(" ");
-                    if (lastSpace > 100) match = { index: lastSpace, 0: " " };
-                    else match = { index: 150, 0: "" };
+                    if (lastSpace > 100) match = { 0: unprocessedText.substring(0, lastSpace + 1) };
+                    else match = { 0: unprocessedText.substring(0, 150) };
                 }
                 
                 while (match) {
-                    let cutIndex = match.index + match[0].length;
+                    let cutIndex = match[0].length;
                     let sentenceToProcess = unprocessedText.substring(0, cutIndex).trim();
                     
                     processedLength += cutIndex;
@@ -110,13 +106,12 @@
                         processBackgroundCorrection(sentenceToProcess, idToProcess);
                     }
                     
-                    match = unprocessedText.match(/(다|나|까|요|습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서)($|\s|[\.\,\?\!])/);
-                    if (match && match.index < 15) { match = null; }
+                    match = unprocessedText.match(/^(.{3,}?)(다|나|까|요|습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서)($|\s|[\.\,\?\!])/);
                     
                     if (!match && unprocessedText.length > 150) {
                         let lastSpace = unprocessedText.lastIndexOf(" ");
-                        if (lastSpace > 100) match = { index: lastSpace, 0: " " };
-                        else match = { index: 150, 0: "" };
+                        if (lastSpace > 100) match = { 0: unprocessedText.substring(0, lastSpace + 1) };
+                        else match = { 0: unprocessedText.substring(0, 150) };
                     }
                 }
             };
@@ -179,7 +174,6 @@
             sendToFirebaseAndTranslate(cleanCorrected, msgId);
         }
 
-        // 💡 API 실패 시 조용히 넘어가지 않도록 에러 처리도 강화했습니다.
         async function correctKoreanWithGemini(text) {
             try {
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
