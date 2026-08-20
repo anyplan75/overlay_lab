@@ -39,7 +39,7 @@
                 folderHandle = await window.showDirectoryPicker();
                 document.getElementById('folderBtn').style.display = 'none';
                 document.getElementById('startBtn').style.display = 'inline-block';
-            } catch (error) { console.log("폴더 연결 취소"); }
+            } catch (error) {}
         }
 
         async function saveTextToFile(filename, content) {
@@ -53,7 +53,7 @@
         }
 
         if (!('webkitSpeechRecognition' in window)) {
-            alert("인터넷 탐색기는 구글 크롬을 사용해 주십시오.");
+            alert("구글 크롬을 사용해 주십시오.");
         } else {
             recognition = new webkitSpeechRecognition();
             recognition.continuous = true;
@@ -83,6 +83,11 @@
 
                 let match = unprocessedText.match(/(다|나|까|요|습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서)($|\s|[\.\,\?\!])/);
                 
+                // 💡 인공지능이 문맥을 파악할 수 있도록, 15자 미만의 너무 짧은 토막에서는 자르지 않고 더 모읍니다!
+                if (match && match.index < 15) {
+                    match = null;
+                }
+
                 if (!match && unprocessedText.length > 150) {
                     let lastSpace = unprocessedText.lastIndexOf(" ");
                     if (lastSpace > 100) match = { index: lastSpace, 0: " " };
@@ -106,6 +111,8 @@
                     }
                     
                     match = unprocessedText.match(/(다|나|까|요|습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서)($|\s|[\.\,\?\!])/);
+                    if (match && match.index < 15) { match = null; }
+                    
                     if (!match && unprocessedText.length > 150) {
                         let lastSpace = unprocessedText.lastIndexOf(" ");
                         if (lastSpace > 100) match = { index: lastSpace, 0: " " };
@@ -114,13 +121,12 @@
                 }
             };
 
-            recognition.onerror = function(event) { console.log("마이크 상태: " + event.error); };
+            recognition.onerror = function(event) {};
             recognition.onend = function() {
                 if (isBroadcasting) { setTimeout(() => { try { recognition.start(); } catch(e) {} }, 10); }
             };
         }
 
-        // 💡 AI 과부하를 막기 위해, 자바스크립트가 직접 바뀐 단어를 찾아 빨간색으로 칠하는 함수입니다.
         function highlightDifferences(origText, corrText) {
             const origWords = origText.trim().split(/\s+/);
             const corrWords = corrText.trim().split(/\s+/);
@@ -162,29 +168,30 @@
         async function processBackgroundCorrection(text, msgId) {
             let cleanCorrected = await correctKoreanWithGemini(text);
             
-            // AI 오류 시 하드코딩 교정 방어
             if (!cleanCorrected || cleanCorrected === text) {
                 cleanCorrected = text.replace(/하나님 의/g, '하나님의').replace(/예수 그리스도/g, '예수 그리스도의').replace(/성령 님/g, '성령님');
             } else {
                 cleanCorrected = cleanCorrected.replace(/하나님의/g, '하나님의').replace(/성령님/g, '성령님');
             }
 
-            // 💡 빨간색 강조 HTML을 여기서 씌웁니다.
             let highlightedHtml = highlightDifferences(text, cleanCorrected);
-
-            // 송출기 화면에는 빨간색이 입혀진 결과를 넘김
             appendLogMessage(text, msgId, true, highlightedHtml);
-            
-            // 파이어베이스(방송 송출)와 번역에는 순수 텍스트만 보냄
             sendToFirebaseAndTranslate(cleanCorrected, msgId);
         }
 
-        // 💡 AI에게는 HTML 태그 없이 순수 텍스트만 고치라고 지시하여 속도와 인식률을 극대화했습니다.
+        // 💡 API 실패 시 조용히 넘어가지 않도록 에러 처리도 강화했습니다.
         async function correctKoreanWithGemini(text) {
             try {
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-                const prompt = `다음 텍스트의 오탈자와 띄어쓰기를 문맥에 맞게 교정해. 부연 설명 없이 교정된 결과만 출력해:\n\n원본: ${text}`;
-                const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
+                const prompt = `너는 기독교 설교 교정 전문가야. 다음 원문의 오탈자와 띄어쓰기를 문맥에 맞게 다듬어. 부연 설명 없이 교정된 결과만 출력해:\n\n원본: ${text}`;
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2 } })
+                });
+                
+                if (!response.ok) return text;
+                
                 const result = await response.json();
                 if (result.candidates && result.candidates.length > 0) return result.candidates[0].content.parts[0].text.trim();
             } catch (error) {}
