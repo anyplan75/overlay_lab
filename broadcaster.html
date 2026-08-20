@@ -2,56 +2,193 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 송출기 (실시간 즉시 받아쓰기 & 자체 교정)</title>
+    <title>예배 송출기 (실시간 자체 교정 & 빨간색 강조)</title>
     <style>
         body { font-family: sans-serif; background: #1e1e1e; color: white; padding: 40px; text-align: center; }
-        #realtimeText { background: #333; color: #ffeb3b; padding: 20px; border-radius: 8px; font-size: 24px; font-weight: bold; margin-bottom: 20px; }
-        #logBox { background: #000; padding: 20px; border-radius: 8px; height: 400px; overflow-y: auto; text-align: left; line-height: 1.6; }
-        button { padding: 20px 40px; font-size: 20px; font-weight: bold; cursor: pointer; border-radius: 8px; }
+        h1 { color: #4CAF50; }
+        button { padding: 15px 30px; font-size: 20px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; margin: 10px; }
+        #startBtn { background-color: #f44336; color: white; }
+        #stopBtn { background-color: #2196F3; color: white; display: none; }
+        #realtimeText { background: #333; color: #ffeb3b; padding: 15px; border-radius: 8px; font-size: 22px; margin-top: 20px; min-height: 30px; font-weight: bold;}
+        #logBox { background: #000; padding: 20px; border-radius: 8px; height: 350px; overflow-y: auto; margin-top: 20px; text-align: left; line-height: 1.6; font-size: 14px;}
+        .ko-text { color: #4CAF50; }
+        .ai-text { color: #00bcd4; font-weight: bold; margin-bottom: 10px;}
+        /* 💡 교정된 글자를 빨간색으로 표시하는 스타일 */
+        .highlight-fixed { color: #ff5252; font-weight: bold; background-color: rgba(255, 82, 82, 0.1); padding: 0 4px; border-radius: 4px; }
     </style>
 </head>
 <body>
-    <h1>🎙️ 실시간 즉시 받아쓰기 & 자체 교정</h1>
-    <div id="realtimeText">대기 중...</div>
-    <button onclick="startBroadcast()">🔴 방송 시작</button>
 
-    <div id="logBox">데이터 흐름 대기 중...</div>
+    <h1>🎙️ 실시간 자체 교정 & 빨간색 하이라이트 송출기</h1>
+    <p>멈춤 없이 실시간으로 받아쓰며, 교정된 글자는 빨간색으로 시인성을 극대화합니다.</p>
+    
+    <button id="startBtn" onclick="startBroadcast()">🔴 방송 시작</button>
+    <button id="stopBtn" onclick="stopBroadcast()">⏹️ 방송 종료</button>
+
+    <div id="realtimeText">대기 중...</div>
+    <div id="logBox">실시간 처리 기록이 쌓입니다.</div>
 
     <script>
         const FIREBASE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/subtitles.json";
-        let recognition;
         
-        // 💡 실시간 받아쓰기 로직 복구
-        function startBroadcast() {
+        let recognition;
+        let isBroadcasting = false;
+        let unprocessedFinalText = "";
+        let currentSentenceId = Date.now();
+        let lastSpeechTime = Date.now();
+        let silenceTimer = null;
+
+        if (!('webkitSpeechRecognition' in window)) alert("구글 크롬 브라우저 전용입니다!");
+        else {
             recognition = new webkitSpeechRecognition();
             recognition.continuous = true;
-            recognition.interimResults = true; // 💡 임시 결과 즉시 표출!
+            recognition.interimResults = true;
             recognition.lang = 'ko-KR';
 
             recognition.onresult = function(event) {
-                let fullText = "";
-                for (let i = 0; i < event.results.length; ++i) {
-                    fullText += event.results[i][0].transcript;
+                lastSpeechTime = Date.now();
+                let interimTranscript = "";
+                let newlyFinalized = "";
+
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        newlyFinalized += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
                 }
-                // 실시간으로 화면에 무조건 다 띄웁니다.
-                document.getElementById('realtimeText').innerText = `듣는 중: ${fullText}`;
+
+                unprocessedFinalText += newlyFinalized;
+
+                // 실시간 화면 표시
+                let currentKoText = unprocessedFinalText + interimTranscript;
+                if (currentKoText.trim()) {
+                    document.getElementById('realtimeText').innerText = `듣는 중: ${currentKoText.trim()}`;
+                }
+
+                // 어미 및 70자 강제 컷팅 감지
+                let match = unprocessedTextMatch(unprocessedFinalText);
                 
-                // 가위질은 별도로 뒤에서 수행합니다.
-                processAsIWait(fullText);
+                while (match) {
+                    let cutIndex = match.index + match[0].length;
+                    let sentenceToProcess = unprocessedFinalText.substring(0, cutIndex).trim();
+                    unprocessedFinalText = unprocessedFinalText.substring(cutIndex);
+                    
+                    let idToProcess = currentSentenceId;
+                    currentSentenceId = Date.now();
+                    
+                    if (sentenceToProcess.length > 0) {
+                        processAndSendLocal(sentenceToProcess, idToProcess);
+                    }
+                    
+                    match = unprocessedTextMatch(unprocessedFinalText);
+                }
             };
-            recognition.start();
+
+            recognition.onerror = function(event) { console.log("마이크 상태: " + event.error); };
+            recognition.onend = function() {
+                if (isBroadcasting) {
+                    setTimeout(() => { try { recognition.start(); } catch(e) {} }, 10);
+                }
+            };
         }
 
-        // 문장이 완성되면 자체 교정을 거쳐 전송
-        function processAsIWait(text) {
-            let match = text.match(/(습니다|합니다|하십니다|바랍니다|아멘|까요|지요|네요|어요|해요|입니다|니다|은데|는데|지만|거든요|더라|이르되|하되|하니라|나니|도다|거늘|지라|가라사대)[ \.\,\?\!]+/);
-            if (match) {
-                let sentence = text.split(match[0])[0] + match[0];
-                let corrected = sentence.replace(/하나님 의/g, "하나님의");
-                
-                document.getElementById('logBox').innerHTML += `<div>🎤 원본: ${sentence}</div><div>✨ 교정: ${corrected}</div>`;
-                // 번역 및 전송...
+        function unprocessedTextMatch(text) {
+            let m = text.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
+            if (!m && text.length > 70) {
+                let lastSpace = text.lastIndexOf(" ");
+                if (lastSpace > 40) m = { index: lastSpace, 0: " " };
+                else m = { index: 70, 0: "" };
             }
+            return m;
+        }
+
+        // 💡 자체 교정 및 빨간색(highlight-fixed) 태그 적용 함수
+        async function processAndSendLocal(text, msgId) {
+            logMessage(`🎤 원본: ${text}`);
+            
+            // 오탈자 교정 시뮬레이션 및 변경된 부분 검출
+            let corrected = text;
+            let changes = [];
+
+            // 자주 틀리는 표현 자동 교정 규칙 적용
+            const rules = [
+                { from: /하나님 의/g, to: "하나님의" },
+                { from: /예수 그리스도/g, to: "예수 그리스도의" },
+                { from: /성령 님/g, to: "성령님" },
+                { from: /지않았어요/g, to: "않았어요" }
+            ];
+
+            rules.forEach(rule => {
+                if (rule.from.test(corrected)) {
+                    corrected = corrected.replace(rule.from, rule.to);
+                    changes.push(rule.to);
+                }
+            });
+
+            // 화면 로그에 교정된 글자를 빨간색으로 감싸서 표현
+            let displayCorrected = corrected;
+            changes.forEach(word => {
+                displayCorrected = displayCorrected.replace(word, `<span class="highlight-fixed">${word}</span>`);
+            });
+
+            logMessage(`✨ 교정본: ${displayCorrected}`, true);
+            
+            // 번역 및 파이어베이스 전송
+            const targetLangs = ['en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'];
+            let translationPayload = { _timestamp: Date.now() };
+
+            await Promise.all(targetLangs.map(async (lang) => {
+                let trans = await fetchTranslation(corrected, lang);
+                translationPayload[lang] = { text: trans, id: msgId };
+            }));
+
+            translationPayload['ko'] = { text: corrected, id: msgId };
+            fetch(FIREBASE_URL, { method: "PATCH", body: JSON.stringify(translationPayload) }).catch(e => {});
+        }
+
+        async function fetchTranslation(text, targetLang) {
+            try {
+                const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+                const response = await fetch(url);
+                const data = await response.json();
+                return data[0].map(item => item[0]).join("");
+            } catch (error) { return text; }
+        }
+
+        function startBroadcast() {
+            isBroadcasting = true; unprocessedFinalText = ""; currentSentenceId = Date.now();
+            recognition.start();
+            document.getElementById('startBtn').style.display = 'none';
+            document.getElementById('stopBtn').style.display = 'inline-block';
+            logMessage("🎙️ 실시간 자체 교정 송출기 가동 시작!");
+
+            silenceTimer = setInterval(() => {
+                if (isBroadcasting) {
+                    let silenceDuration = Date.now() - lastSpeechTime;
+                    if (silenceDuration > 2500 && unprocessedFinalText.trim().length > 0) {
+                        let sentenceToProcess = unprocessedFinalText.trim();
+                        unprocessedFinalText = "";
+                        let idToProcess = currentSentenceId;
+                        currentSentenceId = Date.now();
+                        processAndSendLocal(sentenceToProcess, idToProcess);
+                    }
+                }
+            }, 500);
+        }
+        
+        function stopBroadcast() {
+            isBroadcasting = false; clearInterval(silenceTimer);
+            if(recognition) recognition.stop();
+            document.getElementById('startBtn').style.display = 'inline-block';
+            document.getElementById('stopBtn').style.display = 'none';
+            logMessage("⏹️ 방송이 종료되었습니다.");
+        }
+
+        function logMessage(msg, isAi = false) {
+            const box = document.getElementById('logBox');
+            box.innerHTML += `<div style="margin-bottom: 8px;" class="${isAi ? 'ai-text' : 'ko-text'}">${msg}</div>`;
+            box.scrollTop = box.scrollHeight;
         }
     </script>
 </body>
