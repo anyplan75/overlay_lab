@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>실시간 예배 송출기 (안정형 20자 컷팅)</title>
+    <title>예배 송출기 (이중 바구니 무손실 & 70자 컷팅)</title>
     <style>
         body { font-family: sans-serif; background: #1e1e1e; color: white; padding: 40px; text-align: center; }
         h1 { color: #4CAF50; }
@@ -18,11 +18,11 @@
 </head>
 <body>
 
-    <h1>🎙️ 안정형 20자 컷팅 송출기</h1>
-    <p>최소 20자 이상 의미가 채워진 상태에서만 문맥을 잘라내어 쪼개짐 현상을 없앤 최종 버전입니다.</p>
+    <h1>🎙️ 무손실 분리형 송출기</h1>
+    <p>임시 글자와 확정 글자를 분리하여 단 1음절의 유실도 허용하지 않으며, 최대 70자 기준으로 안전하게 자릅니다.</p>
     
     <button id="startBtn" onclick="startBroadcast()">🔴 방송 시작</button>
-    <button id="stopBtn" onclick="stopBroadcast()">️ 방송 종료 및 요약 저장</button>
+    <button id="stopBtn" onclick="stopBroadcast()">⏹️ 방송 종료 및 요약 저장</button>
 
     <div id="realtimeText">대기 중...</div>
     <div id="logBox">AI 처리 및 번역 기록이 쌓입니다.</div>
@@ -34,16 +34,15 @@
         let recognition;
         let isBroadcasting = false;
         
-        let globalFinalText = "";
-        let processedLength = 0;
-        let unprocessedText = "";
+        // 💡 핵심: 가위질을 위한 '100% 확정 전용' 안전 바구니
+        let unprocessedFinalText = "";
 
         let currentSentenceId = Date.now();
         let fullSermonText = "";
         let lastSpeechTime = Date.now();
         let silenceTimer = null;
 
-        if (!('webkitSpeechRecognition' in window)) alert("구글 크롬 브라우저 전용입니다!");
+        if (!('webkitSpeechRecognition' in window)) alert("크롬 브라우저 전용입니다!");
         else {
             recognition = new webkitSpeechRecognition();
             recognition.continuous = true;
@@ -52,49 +51,48 @@
 
             recognition.onresult = function(event) {
                 lastSpeechTime = Date.now();
-                let currentInterim = "";
+                let interimTranscript = "";
 
                 for (let i = event.resultIndex; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
-                        globalFinalText += event.results[i][0].transcript;
+                        // 확정 도장이 찍힌 글자만 안전 바구니로 넣습니다.
+                        unprocessedFinalText += event.results[i][0].transcript;
                     } else {
-                        currentInterim += event.results[i][0].transcript;
+                        // 아직 예상 중인 글자는 화면 표시용으로만 씁니다.
+                        interimTranscript += event.results[i][0].transcript;
                     }
                 }
 
-                let totalText = globalFinalText + currentInterim;
-                unprocessedText = totalText.substring(processedLength);
-
-                if (unprocessedText.trim()) {
-                    document.getElementById('realtimeText').innerText = `듣는 중: ${unprocessedText.trim()}`;
+                // 1. 화면 송출: 안전 바구니 + 임시 글자를 모두 합쳐서 즉시 보여줍니다.
+                let currentKoText = unprocessedFinalText + interimTranscript;
+                if (currentKoText.trim()) {
+                    document.getElementById('realtimeText').innerText = `듣는 중: ${currentKoText.trim()}`;
                     fetch(FIREBASE_URL, {
                         method: "PATCH",
-                        body: JSON.stringify({ ko: { text: unprocessedText.trim(), id: currentSentenceId }, _timestamp: Date.now() })
+                        body: JSON.stringify({ ko: { text: currentKoText.trim(), id: currentSentenceId }, _timestamp: Date.now() })
                     }).catch(e => {});
                 }
 
-                // 💡 핵심 방어막: 미지의 텍스트가 최소 20글자를 넘었을 때만 가위질을 시도합니다!
-                let match = null;
-                if (unprocessedText.length >= 20) {
-                    match = unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
-                }
+                // 💡 2. 가위질: 오직 '안전 바구니(unprocessedFinalText)' 안에서만 어미를 찾습니다.
+                let match = unprocessedFinalText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
                 
-                // 70자 강제 컷팅 (너무 길어지는 것 방지)
-                if (!match && unprocessedText.length > 70) {
-                    let lastSpace = unprocessedText.lastIndexOf(" ");
-                    if (lastSpace > 40) {
+                // 💡 3. 형님 요청: 어미가 없어도 70자가 넘어가면 안전한 위치(45자 이후 띄어쓰기)에서 자릅니다.
+                if (!match && unprocessedFinalText.length > 70) {
+                    let lastSpace = unprocessedFinalText.lastIndexOf(" ");
+                    if (lastSpace > 45) {
                         match = { index: lastSpace, 0: " " };
                     } else {
-                        match = { index: 70, 0: "" };
+                        match = { index: 70, 0: "" }; // 띄어쓰기가 아예 없으면 70자에서 칼같이 끊음
                     }
                 }
                 
+                // 가위질을 시작합니다.
                 while (match) {
                     let cutIndex = match.index + match[0].length;
-                    let sentenceToProcess = unprocessedText.substring(0, cutIndex).trim();
+                    let sentenceToProcess = unprocessedFinalText.substring(0, cutIndex).trim();
                     
-                    processedLength += cutIndex;
-                    unprocessedText = totalText.substring(processedLength);
+                    // 안전 바구니에서 자른 만큼 비워냅니다.
+                    unprocessedFinalText = unprocessedFinalText.substring(cutIndex);
                     
                     fullSermonText += sentenceToProcess + " ";
                     let idToProcess = currentSentenceId;
@@ -104,15 +102,19 @@
                         processSentenceAsync(sentenceToProcess, idToProcess);
                     }
                     
-                    match = null;
-                    if (unprocessedText.length >= 20) {
-                        match = unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
-                    }
-                    if (!match && unprocessedText.length > 70) {
-                        let lastSpace = unprocessedText.lastIndexOf(" ");
-                        if (lastSpace > 40) match = { index: lastSpace, 0: " " };
+                    // 바구니에 남은 글자가 있는지 계속 확인합니다.
+                    match = unprocessedFinalText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
+                    if (!match && unprocessedFinalText.length > 70) {
+                        let lastSpace = unprocessedFinalText.lastIndexOf(" ");
+                        if (lastSpace > 45) match = { index: lastSpace, 0: " " };
                         else match = { index: 70, 0: "" };
                     }
+                }
+
+                // 💡 4. 엔진 멱살 잡기: 만약 목사님 말씀이 너무 빨라서 엔진이 '임시 글자'만 70자 넘게 쥐고 안 놔주면?
+                // 강제로 마이크를 한 번 껐다 켜서 그 임시 글자들을 '안전 바구니'로 쏟아버리게 만듭니다!
+                if (interimTranscript.length > 70) {
+                    try { recognition.stop(); } catch(e) {}
                 }
             };
 
@@ -127,7 +129,7 @@
             const originalLength = text.replace(/\s/g, '').length;
             const correctedLength = correctedKoText.replace(/\s/g, '').length;
             
-            if (correctedLength < originalLength * 0.75) {
+            if (correctedLength < originalLength * 0.8) {
                 logMessage(`⚠️ 누락 감지 (원본 사용): AI가 문장을 축약하여 원본으로 대체합니다.`, true, true);
                 correctedKoText = text;
             } else {
@@ -173,21 +175,25 @@
         }
 
         function startBroadcast() {
-            isBroadcasting = true; fullSermonText = ""; globalFinalText = ""; processedLength = 0; unprocessedText = ""; currentSentenceId = Date.now();
+            isBroadcasting = true; fullSermonText = ""; unprocessedFinalText = ""; currentSentenceId = Date.now();
             recognition.start(); document.getElementById('startBtn').style.display = 'none'; document.getElementById('stopBtn').style.display = 'inline-block';
-            logMessage("🎙️ 안정형 20자 컷팅 송출기 가동 시작!");
+            logMessage("🎙️ 이중 바구니 무손실 방송 시작!");
 
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
-                    if (silenceDuration > 2500 && unprocessedText.trim().length > 0) {
-                        let sentenceToProcess = unprocessedText.trim();
-                        processedLength += unprocessedText.length;
-                        unprocessedText = "";
-                        fullSermonText += sentenceToProcess + " ";
-                        let idToProcess = currentSentenceId;
-                        currentSentenceId = Date.now();
-                        processSentenceAsync(sentenceToProcess, idToProcess);
+                    
+                    // 2.5초 이상 침묵이 흐르면 남은 글자를 싹 다 털어냅니다.
+                    if (silenceDuration > 2500) {
+                        try { recognition.stop(); } catch(e) {} // 멈춰서 남은 글자를 확정 짓기
+                        if (unprocessedFinalText.trim().length > 0) {
+                            let sentenceToProcess = unprocessedFinalText.trim();
+                            unprocessedFinalText = "";
+                            fullSermonText += sentenceToProcess + " ";
+                            let idToProcess = currentSentenceId;
+                            currentSentenceId = Date.now();
+                            processSentenceAsync(sentenceToProcess, idToProcess);
+                        }
                     }
                 }
             }, 500);
