@@ -39,7 +39,7 @@
 <body>
     <h1>⚙️ 예배 자막 송출 설정 (어드민)</h1>
     
-    <!-- 원래 있으셨던 전체 화면 정렬 및 배치 기능 -->
+    <!-- 목사님 화면 배치를 위한 전체 화면 정렬 및 영역 설정 -->
     <div class="card">
         <h2 style="margin: 0 0 10px 0; color: #3498db;">🖥️ 전체 화면 구성 및 정렬</h2>
         <div class="global-settings">
@@ -49,7 +49,7 @@
                     <option value="bottom" selected>하단</option>
                 </select>
             </label>
-            <label>자막 영역:
+            <label>자막 영역 (목사님 화면 확보용):
                 <select id="global_area">
                     <option value="full" selected>전체 너비</option>
                     <option value="left_40">좌측 5분의 2</option>
@@ -66,7 +66,7 @@
         </div>
     </div>
 
-    <!-- 새롭게 추가된 언어별 크기/자간 설정 -->
+    <!-- 각 언어별 켜기/끄기 및 글자 속성 제어 -->
     <div class="card" id="controls">
         <h2 style="margin: 0 0 10px 0; color: #e74c3c;">🌍 개별 언어 설정</h2>
     </div>
@@ -75,8 +75,10 @@
     <p id="msg" style="color: #2ecc71; font-weight: bold; text-align: center; margin-top: 20px; font-size: 20px;"></p>
 
     <script>
+        // 형님의 파이어베이스 주소에 저장되는 설정 공간입니다.
         const SETTINGS_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/settings.json";
         
+        // 형님이 사용하시는 8개 국어의 기본값 설정
         const languages = [
             { code: 'ko', name: '한국어', defaultSize: 42, defaultSpacing: -1 },
             { code: 'en', name: '영어', defaultSize: 32, defaultSpacing: 1 },
@@ -90,6 +92,7 @@
 
         const controlsDiv = document.getElementById('controls');
 
+        // 제어판 화면 그리기
         languages.forEach(lang => {
             controlsDiv.innerHTML += `
                 <div class="lang-row">
@@ -105,18 +108,17 @@
             `;
         });
 
+        // 마지막으로 저장했던 설정 불러오기
         async function loadSettings() {
             try {
                 const res = await fetch(SETTINGS_URL);
                 const data = await res.json();
                 if (data) {
-                    // 전체 설정 불러오기
                     if (data.global) {
                         document.getElementById('global_position').value = data.global.position || 'bottom';
                         document.getElementById('global_area').value = data.global.area || 'full';
                         document.getElementById('global_align').value = data.global.align || 'center';
                     }
-                    // 개별 언어 설정 불러오기
                     languages.forEach(lang => {
                         if (data[lang.code]) {
                             document.getElementById(`check_${lang.code}`).checked = data[lang.code].show;
@@ -128,6 +130,7 @@
             } catch (e) {}
         }
 
+        // 파이어베이스로 현재 설정값 쏘기
         async function applySettings() {
             let currentSettings = {
                 _timestamp: Date.now(),
@@ -154,6 +157,7 @@
             } catch (e) { alert("설정 전송 실패"); }
         }
 
+        // 창을 열자마자 기존 설정 적용
         loadSettings();
     </script>
 </body>
