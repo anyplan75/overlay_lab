@@ -16,7 +16,6 @@
 
     <div id="realtimeText">듣는 중...</div>
     
-    <!-- 사진처럼 원본과 빨간색 교정본이 위아래로 쌓이는 공간 -->
     <div id="logBox" style="background: #111; padding: 20px; border-radius: 8px; height: 500px; overflow-y: auto; margin-top: 20px; text-align: left; line-height: 1.8;"></div>
 
     <script>
@@ -79,15 +78,11 @@
                 if (unprocessedText.trim()) {
                     let liveText = unprocessedText.trim();
                     document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
-                    
-                    // 1. 첫 번째 임시파일: 실시간 날것의 데이터를 끊임없이 저장 (프로프리젠터 즉시 반응)
                     saveTextToFile('temp_live.txt', liveText);
                 }
 
-                // 💡 형님의 설계 완벽 복원: 글자 길이에 상관없이 "다, 나, 까, 요" 및 "교회 용어"가 나오면 즉시 자릅니다!
                 let match = unprocessedText.match(/(다|나|까|요|습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서)($|\s|[\.\,\?\!])/);
                 
-                // 끝맺음말이 전혀 없이 랩하듯 이어질 때만, 150자가 넘어가면 방어적으로 끊어줍니다.
                 if (!match && unprocessedText.length > 150) {
                     let lastSpace = unprocessedText.lastIndexOf(" ");
                     if (lastSpace > 100) match = { index: lastSpace, 0: " " };
@@ -125,7 +120,18 @@
             };
         }
 
-        // 원본과 교정본 동시 출력 로직
+        // 💡 AI 과부하를 막기 위해, 자바스크립트가 직접 바뀐 단어를 찾아 빨간색으로 칠하는 함수입니다.
+        function highlightDifferences(origText, corrText) {
+            const origWords = origText.trim().split(/\s+/);
+            const corrWords = corrText.trim().split(/\s+/);
+            return corrWords.map((word, idx) => {
+                if (idx >= origWords.length || origWords[idx] !== word) {
+                    return `<span style="color: #ff5252; font-weight: bold;">${word}</span>`;
+                }
+                return word;
+            }).join(" ");
+        }
+
         function appendLogMessage(originalText, msgId, isCorrected, correctedText = "") {
             const box = document.getElementById('logBox');
             let targetDiv = document.getElementById(`log_${msgId}`);
@@ -154,31 +160,30 @@
         }
 
         async function processBackgroundCorrection(text, msgId) {
-            let corrected = await correctKoreanWithGemini(text);
+            let cleanCorrected = await correctKoreanWithGemini(text);
             
-            if (!corrected || corrected === text) {
-                corrected = text
-                    .replace(/하나님 의/g, '하나님<span style="color: red;">의</span>')
-                    .replace(/예수 그리스도/g, '예수 그리스도<span style="color: red;">의</span>')
-                    .replace(/성령 님/g, '성령<span style="color: red;">님</span>');
+            // AI 오류 시 하드코딩 교정 방어
+            if (!cleanCorrected || cleanCorrected === text) {
+                cleanCorrected = text.replace(/하나님 의/g, '하나님의').replace(/예수 그리스도/g, '예수 그리스도의').replace(/성령 님/g, '성령님');
             } else {
-                corrected = corrected
-                    .replace(/하나님의/g, '하나님<span style="color: red;">의</span>')
-                    .replace(/성령님/g, '성령<span style="color: red;">님</span>');
+                cleanCorrected = cleanCorrected.replace(/하나님의/g, '하나님의').replace(/성령님/g, '성령님');
             }
 
-            appendLogMessage(text, msgId, true, corrected);
+            // 💡 빨간색 강조 HTML을 여기서 씌웁니다.
+            let highlightedHtml = highlightDifferences(text, cleanCorrected);
+
+            // 송출기 화면에는 빨간색이 입혀진 결과를 넘김
+            appendLogMessage(text, msgId, true, highlightedHtml);
             
-            let cleanCorrected = corrected.replace(/<[^>]*>/g, '');
-            
-            // 2. 두 번째 임시파일: 문맥이 확정된 완벽한 문장 저장 및 번역 시작
+            // 파이어베이스(방송 송출)와 번역에는 순수 텍스트만 보냄
             sendToFirebaseAndTranslate(cleanCorrected, msgId);
         }
 
+        // 💡 AI에게는 HTML 태그 없이 순수 텍스트만 고치라고 지시하여 속도와 인식률을 극대화했습니다.
         async function correctKoreanWithGemini(text) {
             try {
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-                const prompt = `다음 텍스트의 오탈자와 띄어쓰기를 문맥에 맞게 교정해. 단, 원본과 비교해서 수정되거나 추가된 부분만 반드시 <span style="color: red;"> </span> 태그로 감싸서 결과만 출력해.\n\n원본: ${text}`;
+                const prompt = `다음 텍스트의 오탈자와 띄어쓰기를 문맥에 맞게 교정해. 부연 설명 없이 교정된 결과만 출력해:\n\n원본: ${text}`;
                 const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
                 const result = await response.json();
                 if (result.candidates && result.candidates.length > 0) return result.candidates[0].content.parts[0].text.trim();
@@ -186,7 +191,6 @@
             return text;
         }
 
-        // 무료 번역(gtx) 우선, 막히면 API로 자동 우회
         async function fetchTranslation(text, targetLang) {
             try {
                 const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
