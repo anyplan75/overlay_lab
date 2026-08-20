@@ -1,32 +1,27 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>English Sub-title</title>
+    <title>English Subtitles</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div id="container" class="layout-bottom">
-        <div id="subtitle">한English Sub-title...</div>
+        <div id="subtitle">Waiting for English subtitles...</div>
     </div>
     <script>
-        // 💡 영어 파일(en.html)을 만드실 때는 여기를 'en'으로 바꿔주세요!
         const currentLang = 'en';
-        let lastTime = 0, subtitleLines = [], maxLines = 2;
+        let lastTime = 0, subtitleLines = [], maxLines = 3;
         
         function updateSubtitle() {
             fetch("https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/.json")
             .then(r => r.json())
             .then(d => {
                 const c = document.getElementById('container'), s = document.getElementById('subtitle');
-                
-                // 어드민의 위치 변경 지시를 받습니다.
                 if (d && d.style && d.style.layout) {
                     c.className = 'layout-' + d.style.layout;
-                    maxLines = (d.style.layout === 'left' || d.style.layout === 'right') ? 10 : 2;
+                    maxLines = (d.style.layout === 'top' || d.style.layout === 'bottom') ? 3 : 5;
                 }
-                
-                // 자막 글자를 업데이트합니다.
                 if (d && d.subtitles && d.subtitles._timestamp !== lastTime) {
                     lastTime = d.subtitles._timestamp; let n = d.subtitles[currentLang];
                     if (n) {
@@ -37,11 +32,10 @@
                         s.innerHTML = subtitleLines.map(line => line.text).join('<br>');
                     }
                 }
-                
-                // 어드민의 색상, 폰트 크기 지시를 받습니다.
                 if (d && d.style) {
-                    s.style.fontSize = d.style.fontSize; s.style.color = d.style.color; s.style.textAlign = d.style.align || 'left';
-                    let h = d.style.bgColor.replace('#', ''), r = parseInt(h.substring(0,2), 16), g = parseInt(h.substring(2,4), 16), b = parseInt(h.substring(4,6), 16);
+                    s.style.fontSize = d.style.fontSize; s.style.color = d.style.color; s.style.textAlign = d.style.align || 'center';
+                    let h = d.style.bgColor.replace('#', '');
+                    let r = parseInt(h.substring(0,2), 16), g = parseInt(h.substring(2,4), 16), b = parseInt(h.substring(4,6), 16);
                     s.style.backgroundColor = `rgba(${r}, ${g}, ${b}, ${d.style.bgOpacity})`;
                 }
             });

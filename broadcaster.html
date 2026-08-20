@@ -81,17 +81,27 @@
                     saveTextToFile('temp_live.txt', liveText);
                 }
 
-                // 💡 무한 루프 버그 해결: 문장 처음부터 최소 3글자 이후에 등장하는 첫 번째 '끝맺음말'을 찾아 즉시 자릅니다!
-                let match = unprocessedText.match(/^(.{3,}?)(다|나|까|요|습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서)($|\s|[\.\,\?\!])/);
+                // 💡 폭주 버그 해결: 정규식을 반복 실행하여 15글자 이후에 나오는 '첫 번째' 끝맺음말을 정확히 찾아냅니다.
+                let regex = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|[요다까나])(\s|[.,?!]|$)/g;
+                let match = null;
+                let execResult;
                 
-                if (!match && unprocessedText.length > 150) {
-                    let lastSpace = unprocessedText.lastIndexOf(" ");
-                    if (lastSpace > 100) match = { 0: unprocessedText.substring(0, lastSpace + 1) };
-                    else match = { 0: unprocessedText.substring(0, 150) };
+                while ((execResult = regex.exec(unprocessedText)) !== null) {
+                    if (execResult.index >= 15) {
+                        match = execResult;
+                        break;
+                    }
+                }
+
+                // 💡 문장이 80자(약 2줄 분량)를 넘어가면 안전을 위해 강제로 여백에서 잘라냅니다.
+                if (!match && unprocessedText.length > 80) {
+                    let lastSpace = unprocessedText.lastIndexOf(" ", 80);
+                    if (lastSpace > 20) match = { index: lastSpace, 0: " " };
+                    else match = { index: 80, 0: "" };
                 }
                 
                 while (match) {
-                    let cutIndex = match[0].length;
+                    let cutIndex = match.index + match[0].length;
                     let sentenceToProcess = unprocessedText.substring(0, cutIndex).trim();
                     
                     processedLength += cutIndex;
@@ -106,12 +116,21 @@
                         processBackgroundCorrection(sentenceToProcess, idToProcess);
                     }
                     
-                    match = unprocessedText.match(/^(.{3,}?)(다|나|까|요|습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서)($|\s|[\.\,\?\!])/);
+                    // 다음 토막을 찾기 위해 리셋
+                    match = null;
+                    regex.lastIndex = 0;
                     
-                    if (!match && unprocessedText.length > 150) {
-                        let lastSpace = unprocessedText.lastIndexOf(" ");
-                        if (lastSpace > 100) match = { 0: unprocessedText.substring(0, lastSpace + 1) };
-                        else match = { 0: unprocessedText.substring(0, 150) };
+                    while ((execResult = regex.exec(unprocessedText)) !== null) {
+                        if (execResult.index >= 15) {
+                            match = execResult;
+                            break;
+                        }
+                    }
+                    
+                    if (!match && unprocessedText.length > 80) {
+                        let lastSpace = unprocessedText.lastIndexOf(" ", 80);
+                        if (lastSpace > 20) match = { index: lastSpace, 0: " " };
+                        else match = { index: 80, 0: "" };
                     }
                 }
             };
