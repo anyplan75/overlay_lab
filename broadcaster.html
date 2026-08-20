@@ -2,8 +2,8 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 송출기 (다중 송출 및 파일 동시 저장 완벽본)</title>
-    <!-- 꾸밈 문서 연결 -->
+    <title>예배 자막 송출기</title>
+    <!-- 형님이 따로 관리하시는 화면 꾸밈 문서를 연결합니다 -->
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,12 +11,20 @@
     <h1>🎙️ 실시간 다중 송출 및 파일 저장 시스템</h1>
     <p>1단계: 아이클라우드 JUN_Translate 폴더를 연결하세요. <br>2단계: 방송을 시작하세요.</p>
     
-    <button id="folderBtn" class="btn" onclick="connectLocalFolder()">📁 저장 폴더(JUN_Translate) 연결하기</button>
+    <button id="folderBtn" class="btn" onclick="connectLocalFolder()">📁 저장 폴더 연결하기</button>
     <button id="startBtn" class="btn" onclick="startBroadcast()">🔴 방송 시작</button>
-    <button id="stopBtn" class="btn" onclick="stopBroadcast()">⏹️ 방송 종료 및 요약 저장</button>
+    <button id="stopBtn" class="btn" onclick="stopBroadcast()">⏹️ 방송 종료</button>
 
-    <div id="realtimeText">대기 중...</div>
-    <div id="logBox">실시간 처리 기록이 쌓입니다.</div>
+    <!-- 복잡한 기록창을 없애고, 현재 상태만 깔끔하게 보여줍니다 -->
+    <div style="margin-top: 40px; padding: 20px; background: #222; border-radius: 10px;">
+        <div style="color: #aaa; font-size: 16px; margin-bottom: 5px;">[지금 듣고 있는 내용]</div>
+        <div id="realtimeText" style="color: #ffeb3b; font-size: 24px; min-height: 35px; font-weight: bold;">대기 중...</div>
+        
+        <div style="margin-top: 30px; border-top: 1px solid #444; padding-top: 20px;">
+            <div style="color: #aaa; font-size: 16px; margin-bottom: 5px;">[방금 송출 및 교정된 내용]</div>
+            <div id="finalText" style="color: #4CAF50; font-size: 24px; min-height: 35px; font-weight: bold;">없음</div>
+        </div>
+    </div>
 
     <script>
         const GEMINI_API_KEY = "형님의_API_키를_넣어주세요";
@@ -34,19 +42,17 @@
         let lastSpeechTime = Date.now();
         let silenceTimer = null;
 
-        // 로컬(기기 내부) 폴더 연결
         async function connectLocalFolder() {
             try {
                 folderHandle = await window.showDirectoryPicker();
                 document.getElementById('folderBtn').style.display = 'none';
                 document.getElementById('startBtn').style.display = 'inline-block';
-                logMessage("📁 폴더 연결 완료. 방송을 시작할 수 있습니다.");
+                document.getElementById('finalText').innerText = "📁 폴더 연결 완료. 방송을 시작할 수 있습니다.";
             } catch (error) {
-                logMessage("❌ 폴더 선택이 취소되었거나 오류가 발생했습니다.");
+                document.getElementById('finalText').innerText = "❌ 폴더 선택이 취소되었습니다.";
             }
         }
 
-        // 선택한 폴더에 파일 저장 (프로프리젠터 연동용)
         async function saveTextToFile(filename, content) {
             if (!folderHandle) return;
             try {
@@ -84,11 +90,10 @@
 
                 if (unprocessedText.trim()) {
                     let liveText = unprocessedText.trim();
-                    document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
+                    document.getElementById('realtimeText').innerText = liveText;
                     sendToFirebaseAndFile(liveText, currentSentenceId, false);
                 }
 
-                // 문장 짤림 방지 완화 공식
                 let match = null;
                 if (unprocessedText.length > 45) {
                     match = unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서)($|[ \.\,\?\!]+)/);
@@ -112,7 +117,7 @@
                     currentSentenceId = Date.now();
                     
                     if (sentenceToProcess.length > 0) {
-                        logMessage(`🎤 원본 확정: ${sentenceToProcess}`);
+                        document.getElementById('finalText').innerText = `🎤 원본: ${sentenceToProcess}`;
                         processBackgroundCorrection(sentenceToProcess, idToProcess);
                     }
                     
@@ -138,16 +143,16 @@
             
             if (!corrected || corrected === text) {
                 corrected = text
-                    .replace(/하나님 의/g, '하나님<span class="highlight-fixed">의</span>')
-                    .replace(/예수 그리스도/g, '예수 그리스도<span class="highlight-fixed">의</span>')
-                    .replace(/성령 님/g, '성령<span class="highlight-fixed">님</span>');
+                    .replace(/하나님 의/g, '하나님의')
+                    .replace(/예수 그리스도/g, '예수 그리스도의')
+                    .replace(/성령 님/g, '성령님');
             } else {
                 corrected = corrected
-                    .replace(/하나님의/g, '하나님<span class="highlight-fixed">의</span>')
-                    .replace(/성령님/g, '성령<span class="highlight-fixed">님</span>');
+                    .replace(/하나님의/g, '하나님의')
+                    .replace(/성령님/g, '성령님');
             }
 
-            logMessage(`✨ 교정 덮어쓰기: ${corrected}`, true);
+            document.getElementById('finalText').innerHTML = `✨ 교정됨: ${corrected}`;
             let cleanCorrected = corrected.replace(/<[^>]*>/g, '');
             sendToFirebaseAndFile(cleanCorrected, msgId, true);
         }
@@ -167,11 +172,9 @@
             const targetLangs = ['en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'];
             let translationPayload = { _timestamp: Date.now() };
 
-            // 한국어 저장 및 전송
             saveTextToFile('ko.txt', text);
             translationPayload['ko'] = { text: text, id: msgId };
 
-            // 다국어 번역 후 저장 및 전송
             await Promise.all(targetLangs.map(async (lang) => {
                 let trans = await fetchTranslation(text, lang);
                 saveTextToFile(`${lang}.txt`, trans);
@@ -195,7 +198,8 @@
             recognition.start();
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'inline-block';
-            logMessage("🎙️ 송출기 가동 시작!");
+            document.getElementById('realtimeText').innerText = "🎙️ 송출기 가동 시작...";
+            document.getElementById('finalText').innerText = "대기 중";
 
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
@@ -207,6 +211,7 @@
                         fullSermonText += sentenceToProcess + " ";
                         let idToProcess = currentSentenceId;
                         currentSentenceId = Date.now();
+                        document.getElementById('finalText').innerText = `🎤 원본 (침묵넘김): ${sentenceToProcess}`;
                         processBackgroundCorrection(sentenceToProcess, idToProcess);
                     }
                 }
@@ -218,7 +223,8 @@
             if(recognition) recognition.stop();
             document.getElementById('startBtn').style.display = 'inline-block';
             document.getElementById('stopBtn').style.display = 'none';
-            logMessage("⏹️ 방송 종료. 요약을 시작합니다...");
+            document.getElementById('realtimeText').innerText = "방송 종료됨";
+            
             fetch(FIREBASE_URL, { method: "PUT", body: JSON.stringify({ _timestamp: Date.now() }) });
             await generateSummaryFile();
         }
@@ -235,13 +241,7 @@
                 const blob = new Blob([finalSummary], { type: 'text/plain' });
                 const linkElement = document.createElement("a"); linkElement.href = URL.createObjectURL(blob);
                 const now = new Date(); linkElement.download = `설교요약_${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()}.txt`; linkElement.click();
-            } catch (error) { logMessage(`❌ 요약 오류: ${error}`); }
-        }
-
-        function logMessage(msg, isAi = false) {
-            const box = document.getElementById('logBox');
-            box.innerHTML += `<div style="margin-bottom: 6px;" class="${isAi ? 'ai-text' : 'ko-text'}">${msg}</div>`;
-            box.scrollTop = box.scrollHeight;
+            } catch (error) { console.log(`요약 오류: ${error}`); }
         }
     </script>
 </body>
