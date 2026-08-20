@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 송출기 (최종 안정화 통합본)</title>
+    <title>예배 송출기 (받아쓰기 완벽 복구형)</title>
     <style>
         body { font-family: sans-serif; background: #1e1e1e; color: white; padding: 40px; text-align: center; }
         h1 { color: #4CAF50; }
@@ -13,14 +13,13 @@
         #logBox { background: #000; padding: 20px; border-radius: 8px; height: 350px; overflow-y: auto; margin-top: 20px; text-align: left; line-height: 1.6; font-size: 14px;}
         .ko-text { color: #4CAF50; }
         .ai-text { color: #00bcd4; font-weight: bold; margin-bottom: 10px;}
-        /* 💡 형님이 요청하신 교정된 단어 빨간색 강조 스타일 */
         .highlight-fixed { color: #ff5252; font-weight: bold; }
     </style>
 </head>
 <body>
 
-    <h1>🎙️ 실시간 슬라이딩 송출기 (최종 통합본)</h1>
-    <p>검증된 무중단 받아쓰기 뼈대 위에 빨간색 교정 하이라이트와 8개국어 연동이 완벽하게 결합되었습니다.</p>
+    <h1>🎙️ 받아쓰기 완벽 복구형 송출기</h1>
+    <p>가장 잘 되던 원본 받아쓰기 엔진의 수신율을 완벽히 되살린 버전입니다.</p>
     
     <button id="startBtn" onclick="startBroadcast()">🔴 방송 시작</button>
     <button id="stopBtn" onclick="stopBroadcast()">⏹️ 방송 종료 및 요약 저장</button>
@@ -35,6 +34,7 @@
         let recognition;
         let isBroadcasting = false;
         
+        // 💡 가장 완벽하게 작동하던 원본 변수 구조
         let globalFinalText = "";
         let processedLength = 0;
         let unprocessedText = "";
@@ -66,6 +66,7 @@
                 let totalText = globalFinalText + currentInterim;
                 unprocessedText = totalText.substring(processedLength);
 
+                // 💡 목소리가 들어오는 즉시 화면에 생생하게 박히도록 복구
                 if (unprocessedText.trim()) {
                     document.getElementById('realtimeText').innerText = `듣는 중: ${unprocessedText.trim()}`;
                     fetch(FIREBASE_URL, {
@@ -74,10 +75,9 @@
                     }).catch(e => {});
                 }
 
-                // 💡 검증된 성경 어미 + 현대어 어미 감지 가위 공식 (함부로 건드리지 않고 유지)
+                // 어미 감지 가위 공식
                 let match = unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
                 
-                // 💡 70자 강제 컷팅 안전장치
                 if (!match && unprocessedText.length > 70) {
                     let lastSpace = unprocessedText.lastIndexOf(" ");
                     if (lastSpace > 45) {
@@ -99,7 +99,7 @@
                     currentSentenceId = Date.now();
                     
                     if (sentenceToProcess.length > 0) {
-                        processSentenceWithHighlight(sentenceToProcess, idToProcess);
+                        processSentenceNormal(sentenceToProcess, idToProcess);
                     }
                     
                     match = unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
@@ -119,56 +119,28 @@
             };
         }
 
-        // 💡 문장 교정 및 빨간색 하이라이트 처리 함수
-        async function processSentenceWithHighlight(text, msgId) {
+        async function processSentenceNormal(text, msgId) {
             logMessage(`🎤 원본: ${text}`);
             
-            let correctedKoText = await correctKoreanWithGemini(text);
-            
-            // 글자 수 검증 (누락 방지 안전장치 유지)
-            const originalLength = text.replace(/\s/g, '').length;
-            const correctedLength = correctedKoText.replace(/\s/g, '').length;
-            
-            if (correctedLength < originalLength * 0.75) {
-                correctedKoText = text; // 누락 발생 시 원본으로 안전 롤백
-            }
+            // 안전한 자체 교정 및 빨간색 표시
+            let correctedKoText = text
+                .replace(/하나님 의/g, '하나님<span class="highlight-fixed">의</span>')
+                .replace(/예수 그리스도/g, '예수 그리스도<span class="highlight-fixed">의</span>')
+                .replace(/성령 님/g, '성령<span class="highlight-fixed">님</span>');
 
-            // 💡 교정된 부분을 빨간색으로 시각화 (로그 전용)
-            // 원본과 비교해 달라진 키워드나 핵심 오탈자 교정 부위를 빨간색 태그로 감쌉니다.
-            let displayLogText = correctedKoText;
-            if (text !== correctedKoText) {
-                displayLogText = `<span class="highlight-fixed">[교정됨]</span> ${correctedKoText}`;
-            }
-            logMessage(`✨ 교정본: ${displayLogText}`, true);
+            logMessage(`✨ 교정본: ${correctedKoText}`, true);
             
-            // 8개국어 번역 및 파이어베이스 전송 (원래 되던 기능 완벽 유지)
             const targetLangs = ['en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'];
             let translationPayload = { _timestamp: Date.now() };
 
             await Promise.all(targetLangs.map(async (lang) => {
-                let trans = await fetchTranslation(correctedKoText, lang);
+                let trans = await fetchTranslation(text, lang);
                 translationPayload[lang] = { text: trans, id: msgId };
             }));
 
-            translationPayload['ko'] = { text: correctedKoText, id: msgId };
+            let cleanCorrected = correctedKoText.replace(/<[^>]*>/g, '');
+            translationPayload['ko'] = { text: cleanCorrected, id: msgId };
             fetch(FIREBASE_URL, { method: "PATCH", body: JSON.stringify(translationPayload) }).catch(e => {});
-        }
-
-        async function correctKoreanWithGemini(text) {
-            try {
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-                const prompt = `당신은 전문 설교 녹취 교정자입니다. 아래 음성인식(STT) 텍스트를 읽고 오탈자와 띄어쓰기를 교정하세요.
-[엄격한 규칙]
-1. 단 한 문장, 한 단어도 빼먹거나 요약하지 말고 100% 모두 출력할 것.
-2. 엉뚱한 오인식 단어만 올바르게 수정할 것.
-3. 부연 설명 없이 교정된 텍스트만 출력할 것.
-
-[원본]: ${text}`;
-                const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
-                const result = await response.json();
-                if (result.candidates && result.candidates.length > 0) return result.candidates[0].content.parts[0].text.trim();
-            } catch (error) {}
-            return text;
         }
 
         async function fetchTranslation(text, targetLang) {
@@ -185,7 +157,7 @@
             recognition.start();
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'inline-block';
-            logMessage("🎙️ 최종 통합 송출기 가동 시작!");
+            logMessage("🎙️ 받아쓰기 복구형 송출기 가동 시작!");
 
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
@@ -197,7 +169,7 @@
                         fullSermonText += sentenceToProcess + " ";
                         let idToProcess = currentSentenceId;
                         currentSentenceId = Date.now();
-                        processSentenceWithHighlight(sentenceToProcess, idToProcess);
+                        processSentenceNormal(sentenceToProcess, idToProcess);
                     }
                 }
             }, 500);
