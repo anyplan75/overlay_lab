@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>실시간 예배 송출기 (완전체 통합)</title>
+    <title>실시간 예배 송출기 (안정형 20자 컷팅)</title>
     <style>
         body { font-family: sans-serif; background: #1e1e1e; color: white; padding: 40px; text-align: center; }
         h1 { color: #4CAF50; }
@@ -18,24 +18,22 @@
 </head>
 <body>
 
-    <h1>🎙️ 실시간 예배 송출기 (완전체 통합)</h1>
-    <p>무중단 슬라이딩 컷팅, 성경 어미 감지, 글자 수 검증(누락 방지)이 모두 적용된 최종 버전입니다.</p>
+    <h1>🎙️ 안정형 20자 컷팅 송출기</h1>
+    <p>최소 20자 이상 의미가 채워진 상태에서만 문맥을 잘라내어 쪼개짐 현상을 없앤 최종 버전입니다.</p>
     
     <button id="startBtn" onclick="startBroadcast()">🔴 방송 시작</button>
-    <button id="stopBtn" onclick="stopBroadcast()">⏹️ 방송 종료 및 요약 저장</button>
+    <button id="stopBtn" onclick="stopBroadcast()">️ 방송 종료 및 요약 저장</button>
 
     <div id="realtimeText">대기 중...</div>
     <div id="logBox">AI 처리 및 번역 기록이 쌓입니다.</div>
 
     <script>
-        // 👉 여기에 형님의 제미나이 API 키를 넣어주세요.
         const GEMINI_API_KEY = "형님의_API_키를_넣어주세요";
         const FIREBASE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/subtitles.json";
         
         let recognition;
         let isBroadcasting = false;
         
-        // 💡 무중단 실시간 슬라이딩 변수
         let globalFinalText = "";
         let processedLength = 0;
         let unprocessedText = "";
@@ -75,13 +73,16 @@
                     }).catch(e => {});
                 }
 
-                // 💡 성경 어미 + 현대어 어미 완벽 감지 공식
-                let match = unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
+                // 💡 핵심 방어막: 미지의 텍스트가 최소 20글자를 넘었을 때만 가위질을 시도합니다!
+                let match = null;
+                if (unprocessedText.length >= 20) {
+                    match = unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
+                }
                 
-                // 💡 70자 강제 컷팅 안전장치
+                // 70자 강제 컷팅 (너무 길어지는 것 방지)
                 if (!match && unprocessedText.length > 70) {
                     let lastSpace = unprocessedText.lastIndexOf(" ");
-                    if (lastSpace > 45) {
+                    if (lastSpace > 40) {
                         match = { index: lastSpace, 0: " " };
                     } else {
                         match = { index: 70, 0: "" };
@@ -103,30 +104,26 @@
                         processSentenceAsync(sentenceToProcess, idToProcess);
                     }
                     
-                    match = unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
+                    match = null;
+                    if (unprocessedText.length >= 20) {
+                        match = unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
+                    }
                     if (!match && unprocessedText.length > 70) {
                         let lastSpace = unprocessedText.lastIndexOf(" ");
-                        if (lastSpace > 45) match = { index: lastSpace, 0: " " };
+                        if (lastSpace > 40) match = { index: lastSpace, 0: " " };
                         else match = { index: 70, 0: "" };
                     }
                 }
             };
 
             recognition.onerror = function(event) { console.log("마이크 상태: " + event.error); };
-            
-            recognition.onend = function() {
-                if (isBroadcasting) {
-                    setTimeout(() => { try { recognition.start(); } catch(e) {} }, 10);
-                }
-            };
+            recognition.onend = function() { if (isBroadcasting) { setTimeout(() => { try { recognition.start(); } catch(e) {} }, 10); } };
         }
 
-        // 💡 글자 수 검증 및 AI 교정 비동기 공장
         async function processSentenceAsync(text, msgId) {
             logMessage(`🎤 원본: ${text}`);
             let correctedKoText = await correctKoreanWithGemini(text);
             
-            // 글자 수 카운팅 및 롤백 알고리즘
             const originalLength = text.replace(/\s/g, '').length;
             const correctedLength = correctedKoText.replace(/\s/g, '').length;
             
@@ -178,7 +175,7 @@
         function startBroadcast() {
             isBroadcasting = true; fullSermonText = ""; globalFinalText = ""; processedLength = 0; unprocessedText = ""; currentSentenceId = Date.now();
             recognition.start(); document.getElementById('startBtn').style.display = 'none'; document.getElementById('stopBtn').style.display = 'inline-block';
-            logMessage("🎙️ 완전체 통합 송출기 가동 시작!");
+            logMessage("🎙️ 안정형 20자 컷팅 송출기 가동 시작!");
 
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
