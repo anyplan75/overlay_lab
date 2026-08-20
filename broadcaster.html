@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 송출기 (문장 짤림 방지 완화형)</title>
+    <title>예배 송출기 (오타 수정 정상화 버전)</title>
     <style>
         body { font-family: sans-serif; background: #1e1e1e; color: white; padding: 40px; text-align: center; }
         h1 { color: #4CAF50; }
@@ -18,8 +18,8 @@
 </head>
 <body>
 
-    <h1>🎙️ 문장 짤림 방지 송출기</h1>
-    <p>어미에 의해 문장이 너무 짧게 잘려나가지 않도록 길이를 넉넉하게 확장한 안정화 버전입니다.</p>
+    <h1>🎙️ 예배 실시간 다중 송출기 (오타 수정 완료)</h1>
+    <p>에러를 유발하던 오타를 완전히 제거하고 마이크 수신과 백그라운드 덮어쓰기 교정을 정상화했습니다.</p>
     
     <button id="startBtn" onclick="startBroadcast()">🔴 방송 시작</button>
     <button id="stopBtn" onclick="stopBroadcast()">⏹️ 방송 종료 및 요약 저장</button>
@@ -71,17 +71,16 @@
                     sendToFirebase(liveText, currentSentenceId, false);
                 }
 
-                // 💡 짤림 방지: 글자 수가 최소 40자 이상 쌓이거나 명확한 마침표/긴 호흡일 때만 자르도록 조건 대폭 강화
+                // 어미 감지 가위 공식 (너무 짧게 잘리지 않도록 40자 이상 조건 적용)
                 let match = null;
-                if (unprocessedText.length > 50) {
+                if (unprocessedText.length > 40) {
                     match = unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서)($|[ \.\,\?\!]+)/);
                 }
                 
-                // 100자 이상이면 무조건 강제 컷팅 (너무 길어지는 것 방지)
-                if (!match && unprocessedText.length > 100) {
+                if (!match && unprocessedText.length > 80) {
                     let lastSpace = unprocessedText.lastIndexOf(" ");
-                    if (lastSpace > 60) match = { index: lastSpace, 0: " " };
-                    else match = { index: 100, 0: "" };
+                    if (lastSpace > 50) match = { index: lastSpace, 0: " " };
+                    else match = { index: 80, 0: "" };
                 }
                 
                 while (match) {
@@ -100,11 +99,11 @@
                         processBackgroundCorrection(sentenceToProcess, idToProcess);
                     }
                     
-                    match = unprocessedText.length > 50 ? unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서)($|[ \.\,\?\!]+)/) : null;
-                    if (!match && unprocessedText.length > 100) {
+                    match = unprocessedText.length > 40 ? unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서)($|[ \.\,\?\!]+)/) : null;
+                    if (!match && unprocessedText.length > 80) {
                         let lastSpace = unprocessedText.lastIndexOf(" ");
-                        if (lastSpace > 60) match = { index: lastSpace, 0: " " };
-                        else match = { index: 100, 0: "" };
+                        if (lastSpace > 50) match = { index: lastSpace, 0: " " };
+                        else match = { index: 80, 0: "" };
                     }
                 }
             };
@@ -175,12 +174,12 @@
             recognition.start();
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'inline-block';
-            logMessage("🎙️ 짤림 방지 송출기 가동 시작!");
+            logMessage("🎙️ 정상화된 송출기 가동 시작!");
 
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
-                    if (silenceDuration > 3500 && unprocessedText.trim().length > 0) {
+                    if (silenceDuration > 3000 && unprocessedText.trim().length > 0) {
                         let sentenceToProcess = unprocessedText.trim();
                         processedLength += unprocessedText.length;
                         unprocessedText = "";
@@ -198,7 +197,24 @@
             if(recognition) recognition.stop();
             document.getElementById('startBtn').style.display = 'inline-block';
             document.getElementById('stopBtn').style.display = 'none';
-            logMessage("⏹️ 방송이 종료되었습니다.");
+            logMessage("⏹️ 방송 종료. 요약을 시작합니다...");
+            fetch(FIREBASE_URL, { method: "PUT", body: JSON.stringify({ _timestamp: Date.now() }) });
+            await generateSummaryFile();
+        }
+
+        async function generateSummaryFile() {
+            if (!fullSermonText.trim()) return;
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+            const prompt = `아래 예배 설교를 서론-본론-결론 소제목을 달아 완벽한 요약 문서로 만들어줘.\n\n[설교 원본]\n${fullSermonText}`;
+            try {
+                const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
+                const result = await response.json();
+                let finalSummary = result.candidates ? result.candidates[0].content.parts[0].text : fullSermonText;
+                
+                const blob = new Blob([finalSummary], { type: 'text/plain' });
+                const link = document.createElement("a"); link.href = URL.createObjectURL(blob);
+                const now = new Date(); link.download = `설교요약_${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()}.txt`; link.click();
+            } catch (error) { logMessage(`❌ 요약 오류: ${error}`); }
         }
 
         function logMessage(msg, isAi = false) {
