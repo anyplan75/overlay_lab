@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 송출기 (실시간 자체 교정 & 빨간색 강조)</title>
+    <title>예배 송출기 (정상 작동 & 빨간색 교정)</title>
     <style>
         body { font-family: sans-serif; background: #1e1e1e; color: white; padding: 40px; text-align: center; }
         h1 { color: #4CAF50; }
@@ -14,13 +14,13 @@
         .ko-text { color: #4CAF50; }
         .ai-text { color: #00bcd4; font-weight: bold; margin-bottom: 10px;}
         /* 💡 교정된 글자를 빨간색으로 표시하는 스타일 */
-        .highlight-fixed { color: #ff5252; font-weight: bold; background-color: rgba(255, 82, 82, 0.1); padding: 0 4px; border-radius: 4px; }
+        .highlight-fixed { color: #ff5252; font-weight: bold; }
     </style>
 </head>
 <body>
 
-    <h1>🎙️ 실시간 자체 교정 & 빨간색 하이라이트 송출기</h1>
-    <p>멈춤 없이 실시간으로 받아쓰며, 교정된 글자는 빨간색으로 시인성을 극대화합니다.</p>
+    <h1>🎙️ 실시간 받아쓰기 & 빨간색 교정 송출기</h1>
+    <p>멈춤 없이 부드럽게 받아쓰며, 교정된 단어는 빨간색으로 강조됩니다.</p>
     
     <button id="startBtn" onclick="startBroadcast()">🔴 방송 시작</button>
     <button id="stopBtn" onclick="stopBroadcast()">⏹️ 방송 종료</button>
@@ -60,14 +60,24 @@
 
                 unprocessedFinalText += newlyFinalized;
 
-                // 실시간 화면 표시
+                // 실시간 화면 표시 (막힘없이 바로 뜸)
                 let currentKoText = unprocessedFinalText + interimTranscript;
                 if (currentKoText.trim()) {
                     document.getElementById('realtimeText').innerText = `듣는 중: ${currentKoText.trim()}`;
+                    fetch(FIREBASE_URL, {
+                        method: "PATCH",
+                        body: JSON.stringify({ ko: { text: currentKoText.trim(), id: currentSentenceId }, _timestamp: Date.now() })
+                    }).catch(e => {});
                 }
 
-                // 어미 및 70자 강제 컷팅 감지
-                let match = unprocessedTextMatch(unprocessedFinalText);
+                // 어미 감지 정규식 (가장 안정적인 버전)
+                let match = unprocessedFinalText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
+                
+                if (!match && unprocessedFinalText.length > 70) {
+                    let lastSpace = unprocessedFinalText.lastIndexOf(" ");
+                    if (lastSpace > 40) match = { index: lastSpace, 0: " " };
+                    else match = { index: 70, 0: "" };
+                }
                 
                 while (match) {
                     let cutIndex = match.index + match[0].length;
@@ -78,10 +88,15 @@
                     currentSentenceId = Date.now();
                     
                     if (sentenceToProcess.length > 0) {
-                        processAndSendLocal(sentenceToProcess, idToProcess);
+                        processAndSend(sentenceToProcess, idToProcess);
                     }
                     
-                    match = unprocessedTextMatch(unprocessedFinalText);
+                    match = unprocessedFinalText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
+                    if (!match && unprocessedFinalText.length > 70) {
+                        let lastSpace = unprocessedFinalText.lastIndexOf(" ");
+                        if (lastSpace > 40) match = { index: lastSpace, 0: " " };
+                        else match = { index: 70, 0: "" };
+                    }
                 }
             };
 
@@ -93,57 +108,29 @@
             };
         }
 
-        function unprocessedTextMatch(text) {
-            let m = text.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
-            if (!m && text.length > 70) {
-                let lastSpace = text.lastIndexOf(" ");
-                if (lastSpace > 40) m = { index: lastSpace, 0: " " };
-                else m = { index: 70, 0: "" };
-            }
-            return m;
-        }
-
-        // 💡 자체 교정 및 빨간색(highlight-fixed) 태그 적용 함수
-        async function processAndSendLocal(text, msgId) {
+        // 💡 문장 처리 및 빨간색 하이라이트 적용 함수
+        async function processAndSend(text, msgId) {
             logMessage(`🎤 원본: ${text}`);
             
-            // 오탈자 교정 시뮬레이션 및 변경된 부분 검출
-            let corrected = text;
-            let changes = [];
+            // 오탈자 교정 시뮬레이션 및 빨간색 태그 적용
+            let corrected = text
+                .replace(/하나님 의/g, '하나님<span class="highlight-fixed">의</span>')
+                .replace(/예수 그리스도/g, '예수 그리스도<span class="highlight-fixed">의</span>')
+                .replace(/성령 님/g, '성령<span class="highlight-fixed">님</span>');
 
-            // 자주 틀리는 표현 자동 교정 규칙 적용
-            const rules = [
-                { from: /하나님 의/g, to: "하나님의" },
-                { from: /예수 그리스도/g, to: "예수 그리스도의" },
-                { from: /성령 님/g, to: "성령님" },
-                { from: /지않았어요/g, to: "않았어요" }
-            ];
-
-            rules.forEach(rule => {
-                if (rule.from.test(corrected)) {
-                    corrected = corrected.replace(rule.from, rule.to);
-                    changes.push(rule.to);
-                }
-            });
-
-            // 화면 로그에 교정된 글자를 빨간색으로 감싸서 표현
-            let displayCorrected = corrected;
-            changes.forEach(word => {
-                displayCorrected = displayCorrected.replace(word, `<span class="highlight-fixed">${word}</span>`);
-            });
-
-            logMessage(`✨ 교정본: ${displayCorrected}`, true);
+            logMessage(`✨ 교정본: ${corrected}`, true);
             
-            // 번역 및 파이어베이스 전송
             const targetLangs = ['en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'];
             let translationPayload = { _timestamp: Date.now() };
 
             await Promise.all(targetLangs.map(async (lang) => {
-                let trans = await fetchTranslation(corrected, lang);
+                let trans = await fetchTranslation(text, lang); // 번역은 깔끔하게 원문 기준으로 처리
                 translationPayload[lang] = { text: trans, id: msgId };
             }));
 
-            translationPayload['ko'] = { text: corrected, id: msgId };
+            // 파이어베이스에는 태그를 제외한 순수 텍스트 전송
+            let cleanCorrected = corrected.replace(/<[^>]*>/g, '');
+            translationPayload['ko'] = { text: cleanCorrected, id: msgId };
             fetch(FIREBASE_URL, { method: "PATCH", body: JSON.stringify(translationPayload) }).catch(e => {});
         }
 
@@ -161,7 +148,7 @@
             recognition.start();
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'inline-block';
-            logMessage("🎙️ 실시간 자체 교정 송출기 가동 시작!");
+            logMessage("🎙️ 방송 송출이 시작되었습니다.");
 
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
@@ -171,7 +158,7 @@
                         unprocessedFinalText = "";
                         let idToProcess = currentSentenceId;
                         currentSentenceId = Date.now();
-                        processAndSendLocal(sentenceToProcess, idToProcess);
+                        processAndSend(sentenceToProcess, idToProcess);
                     }
                 }
             }, 500);
