@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>최종 완성 예배 송출기 (문맥 강제 컷팅 + 불사조 마이크)</title>
+    <title>예배 송출기 (무손실 자연호흡 감지 + 무료번역)</title>
     <style>
         body { font-family: sans-serif; background: #1e1e1e; color: white; padding: 40px; text-align: center; }
         h1 { color: #4CAF50; }
@@ -17,18 +17,18 @@
 </head>
 <body>
 
-    <h1>🎙️ 스마트 문맥 컷팅 송출기</h1>
-    <p>문맥이 완료되면 지체 없이 즉시 잘라서 AI 교정과 통역으로 던집니다.</p>
+    <h1>🎙️ 무손실 AI 교정 송출기</h1>
+    <p>오디오 짤림 없이 목사님의 자연스러운 호흡에 맞춰 AI 교정과 무료 번역을 진행합니다.</p>
     
     <button id="startBtn" onclick="startBroadcast()">🔴 방송 시작</button>
     <button id="stopBtn" onclick="stopBroadcast()">⏹️ 방송 종료 및 요약 저장</button>
 
     <div id="realtimeText">대기 중...</div>
-    <div id="logBox">AI 처리 기록이 쌓입니다.</div>
+    <div id="logBox">AI 처리 및 번역 기록이 쌓입니다.</div>
 
     <script>
         // 👉 여기에 형님의 제미나이 API 키를 넣어주세요.
-        const GEMINI_API_KEY = "AIzaSyAHkYcv8tZ-NaRH2NBmLdVGQ-PjOOqwsiM";
+        const GEMINI_API_KEY = "형님의_API_키를_넣어주세요";
         const FIREBASE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/subtitles.json";
         
         let recognition;
@@ -48,11 +48,12 @@
                 let finalTranscript = "";
 
                 for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    // 💡 오디오 유실의 주범인 '강제 컷팅'을 없애고, 크롬의 자연 호흡 감지(isFinal)만 사용합니다.
                     if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript.trim();
                     else interimTranscript += event.results[i][0].transcript;
                 }
 
-                // 💡 1. 0.1초 단위 한국어 실시간 쏘기
+                // 1. 한국어 실시간 쏘기 (0.1초 단위 업데이트)
                 let currentKoText = finalTranscript || interimTranscript;
                 if (currentKoText.trim()) {
                     document.getElementById('realtimeText').innerText = `듣는 중: ${currentKoText}`;
@@ -62,50 +63,35 @@
                     }).catch(e => {});
                 }
 
-                // 💡 2. 준이형님의 천재적인 기획: "스마트 문맥 강제 컷팅"
-                // 아직 문장이 완전히 안 끝났어도, 길이가 어느 정도 되고(10글자 이상) 끝맺는 말(어미)이 나오면 강제로 잘라버립니다!
-                if (!finalTranscript && interimTranscript.trim().length > 10) {
-                    const text = interimTranscript.trim();
-                    const endings = ["습니다", "합니다", "하십니다", "바랍니다", "축원합니다", "할지어다", "아멘", "까요", "을까요", "잖아요", "대요", "지요", "네요", "어요", "해요", "입니다", "옵니다", "나이다"];
-                    
-                    const hasEnding = endings.some(ending => text.endsWith(ending));
-                    
-                    if (hasEnding) {
-                        // 15초를 기다리지 않고 강제로 마이크를 한 번 스톱시킵니다. (그러면 즉시 finalTranscript로 확정되어 아래 로직으로 넘어갑니다)
-                        recognition.stop();
-                    }
-                }
-
-                // 💡 3. 문장이 확정되었을 때 (마이크가 자연스럽게 끊겼거나, 위에서 강제로 잘랐거나)
+                // 2. 크롬이 자연스럽게 문장 종료를 감지했을 때 (호흡을 골랐을 때)
                 if (finalTranscript) {
                     const sentenceToProcess = finalTranscript;
                     const idToProcess = currentSentenceId;
                     
-                    // 곧바로 다음 문장을 듣기 위해 새로운 번호표 발급
+                    // 번호표 즉시 교체 (마이크는 1초도 멈추지 않고 계속 다음 말씀을 듣습니다)
                     currentSentenceId = Date.now();
                     fullSermonText += sentenceToProcess + " ";
                     
-                    // 인공지능 교정과 다국어 통역은 뒷단(백그라운드)으로 던집니다!
+                    // AI 교정과 다국어 통역은 백그라운드로 전송
                     processSentenceAsync(sentenceToProcess, idToProcess);
                 }
             };
 
-            // 💡 4. 마이크 에러 방어막
             recognition.onerror = function(event) {
                 console.log("마이크 상태 경고: " + event.error);
             };
 
-            // 💡 5. 불사조 마이크: 마이크가 꺼지면 0.3초 숨 고르고 무조건 강제 부활!
+            // 💡 15초 제한 등으로 마이크가 진짜 꺼졌을 때만 0.3초 뒤 강제 부활시킵니다.
             recognition.onend = function() {
                 if (isBroadcasting) {
                     setTimeout(() => {
                         try { recognition.start(); } catch(e) {}
-                    }, 300); // 목사님이 어미를 마치고 숨을 쉬는 그 찰나(0.3초)에 맞춰 다시 마이크를 켭니다.
+                    }, 300);
                 }
             };
         }
 
-        // 🧠 마이크와 완벽히 분리된 백그라운드 AI 처리 공장
+        // 백그라운드 AI 교정 및 다국어 무료 번역 공장
         async function processSentenceAsync(text, msgId) {
             logMessage(`🎤 원본 확정: ${text}`);
             let correctedKoText = await correctKoreanWithGemini(text);
@@ -114,6 +100,7 @@
             const targetLangs = ['en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'];
             let translationPayload = { _timestamp: Date.now() };
 
+            // 💡 여기서 사용되는 fetchTranslation은 100% 무료 구글 우회 통로를 사용합니다.
             await Promise.all(targetLangs.map(async (lang) => {
                 let trans = await fetchTranslation(correctedKoText, lang);
                 translationPayload[lang] = { text: trans, id: msgId };
@@ -123,6 +110,7 @@
             fetch(FIREBASE_URL, { method: "PATCH", body: JSON.stringify(translationPayload) });
         }
 
+        // 제미나이 유료(무료 할당량) API 사용 구간
         async function correctKoreanWithGemini(text) {
             try {
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -134,6 +122,7 @@
             return text;
         }
 
+        // 구글 100% 무료 번역 API 사용 구간 (client=gtx)
         async function fetchTranslation(text, targetLang) {
             try {
                 const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
@@ -143,7 +132,7 @@
             } catch (error) { return text; }
         }
 
-        function startBroadcast() { isBroadcasting = true; fullSermonText = ""; currentSentenceId = Date.now(); recognition.start(); document.getElementById('startBtn').style.display = 'none'; document.getElementById('stopBtn').style.display = 'inline-block'; logMessage("🎙️ 논스톱 스마트 방송 시작!"); }
+        function startBroadcast() { isBroadcasting = true; fullSermonText = ""; currentSentenceId = Date.now(); recognition.start(); document.getElementById('startBtn').style.display = 'none'; document.getElementById('stopBtn').style.display = 'inline-block'; logMessage("🎙️ 무손실 방송 시작!"); }
         
         async function stopBroadcast() { isBroadcasting = false; recognition.stop(); document.getElementById('startBtn').style.display = 'inline-block'; document.getElementById('stopBtn').style.display = 'none'; logMessage("⏹️ 방송 종료. 요약을 시작합니다..."); fetch(FIREBASE_URL, { method: "PUT", body: JSON.stringify({ _timestamp: Date.now() }) }); await generateSummaryFile(); }
 
