@@ -2,182 +2,56 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 송출기 (자체 정규식 교정 & 무제한 무료)</title>
+    <title>예배 송출기 (실시간 즉시 받아쓰기 & 자체 교정)</title>
     <style>
         body { font-family: sans-serif; background: #1e1e1e; color: white; padding: 40px; text-align: center; }
-        h1 { color: #4CAF50; }
-        button { padding: 15px 30px; font-size: 20px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; margin: 10px; }
-        #startBtn { background-color: #f44336; color: white; }
-        #stopBtn { background-color: #2196F3; color: white; display: none; }
-        #realtimeText { background: #333; color: #ffeb3b; padding: 15px; border-radius: 8px; font-size: 22px; margin-top: 20px; min-height: 30px; font-weight: bold;}
-        #logBox { background: #000; padding: 20px; border-radius: 8px; height: 300px; overflow-y: auto; margin-top: 20px; text-align: left; line-height: 1.6; font-size: 14px;}
-        .ko-text { color: #4CAF50; }
-        .ai-text { color: #00bcd4; font-weight: bold; margin-bottom: 10px;}
+        #realtimeText { background: #333; color: #ffeb3b; padding: 20px; border-radius: 8px; font-size: 24px; font-weight: bold; margin-bottom: 20px; }
+        #logBox { background: #000; padding: 20px; border-radius: 8px; height: 400px; overflow-y: auto; text-align: left; line-height: 1.6; }
+        button { padding: 20px 40px; font-size: 20px; font-weight: bold; cursor: pointer; border-radius: 8px; }
     </style>
 </head>
 <body>
-
-    <h1>🎙️ 자체 교정형 무제한 송출기</h1>
-    <p>외부 API 호출 없이, 코드 내장 규칙으로 오탈자를 즉시 교정하여 차단 없이 안전하게 송출합니다.</p>
-    
-    <button id="startBtn" onclick="startBroadcast()">🔴 방송 시작</button>
-    <button id="stopBtn" onclick="stopBroadcast()">⏹️ 방송 종료 및 요약 저장</button>
-
+    <h1>🎙️ 실시간 즉시 받아쓰기 & 자체 교정</h1>
     <div id="realtimeText">대기 중...</div>
-    <div id="logBox">실시간 처리 기록이 쌓입니다.</div>
+    <button onclick="startBroadcast()">🔴 방송 시작</button>
+
+    <div id="logBox">데이터 흐름 대기 중...</div>
 
     <script>
         const FIREBASE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/subtitles.json";
-        
         let recognition;
-        let isBroadcasting = false;
         
-        let globalFinalText = "";
-        let processedLength = 0;
-        let unprocessedText = "";
-
-        let currentSentenceId = Date.now();
-        let fullSermonText = "";
-        let lastSpeechTime = Date.now();
-        let silenceTimer = null;
-
-        if (!('webkitSpeechRecognition' in window)) alert("구글 크롬 브라우저 전용입니다!");
-        else {
+        // 💡 실시간 받아쓰기 로직 복구
+        function startBroadcast() {
             recognition = new webkitSpeechRecognition();
             recognition.continuous = true;
-            recognition.interimResults = true;
+            recognition.interimResults = true; // 💡 임시 결과 즉시 표출!
             recognition.lang = 'ko-KR';
 
             recognition.onresult = function(event) {
-                lastSpeechTime = Date.now();
-                let currentInterim = "";
-
-                for (let i = event.resultIndex; i < event.results.length; ++i) {
-                    if (event.results[i].isFinal) {
-                        globalFinalText += event.results[i][0].transcript;
-                    } else {
-                        currentInterim += event.results[i][0].transcript;
-                    }
+                let fullText = "";
+                for (let i = 0; i < event.results.length; ++i) {
+                    fullText += event.results[i][0].transcript;
                 }
-
-                let totalText = globalFinalText + currentInterim;
-                unprocessedText = totalText.substring(processedLength);
-
-                if (unprocessedText.trim()) {
-                    document.getElementById('realtimeText').innerText = `듣는 중: ${unprocessedText.trim()}`;
-                    fetch(FIREBASE_URL, {
-                        method: "PATCH",
-                        body: JSON.stringify({ ko: { text: unprocessedText.trim(), id: currentSentenceId }, _timestamp: Date.now() })
-                    }).catch(e => {});
-                }
-
-                // 💡 성경 어미 + 현대어 어미 감지
-                let match = unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
+                // 실시간으로 화면에 무조건 다 띄웁니다.
+                document.getElementById('realtimeText').innerText = `듣는 중: ${fullText}`;
                 
-                // 💡 70자 강제 컷팅 안전장치
-                if (!match && unprocessedText.length > 70) {
-                    let lastSpace = unprocessedText.lastIndexOf(" ");
-                    if (lastSpace > 45) {
-                        match = { index: lastSpace, 0: " " };
-                    } else {
-                        match = { index: 70, 0: "" };
-                    }
-                }
-                
-                while (match) {
-                    let cutIndex = match.index + match[0].length;
-                    let sentenceToProcess = unprocessedText.substring(0, cutIndex).trim();
-                    
-                    processedLength += cutIndex;
-                    unprocessedText = totalText.substring(processedLength);
-                    
-                    fullSermonText += sentenceToProcess + " ";
-                    let idToProcess = currentSentenceId;
-                    currentSentenceId = Date.now();
-                    
-                    if (sentenceToProcess.length > 0) {
-                        processSentenceLocally(sentenceToProcess, idToProcess);
-                    }
-                    
-                    match = unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
-                    if (!match && unprocessedText.length > 70) {
-                        let lastSpace = unprocessedText.lastIndexOf(" ");
-                        if (lastSpace > 45) match = { index: lastSpace, 0: " " };
-                        else match = { index: 70, 0: "" };
-                    }
-                }
+                // 가위질은 별도로 뒤에서 수행합니다.
+                processAsIWait(fullText);
             };
-
-            recognition.onerror = function(event) { console.log("마이크 상태: " + event.error); };
-            recognition.onend = function() { if (isBroadcasting) { setTimeout(() => { try { recognition.start(); } catch(e) {} }, 10); } };
+            recognition.start();
         }
 
-        // 💡 외부 API 없이 자체 규칙(사전 및 정규식)으로 오탈자 교정
-        async function processSentenceLocally(text, msgId) {
-            logMessage(`🎤 원본: ${text}`);
-            
-            let correctedKoText = text
-                // 자주 틀리는 음성인식 오탈자 사전 매핑 예시 (필요시 계속 추가 가능)
-                .replace(/하나님 의/g, "하나님의")
-                .replace(/예수 그리스도/g, "예수 그리스도의")
-                .replace(/성령 님/g, "성령님")
-                .replace(/아멘 하(시|십)/g, "아멘하시"); // 예시 규칙들
-
-            logMessage(`✨ 자체 교정본: ${correctedKoText}`, true);
-            
-            const targetLangs = ['en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'];
-            let translationPayload = { _timestamp: Date.now() };
-
-            // 번역은 구글 번역 API(무료 엔드포인트)를 통해 딜레이 없이 처리
-            await Promise.all(targetLangs.map(async (lang) => {
-                let trans = await fetchTranslation(correctedKoText, lang);
-                translationPayload[lang] = { text: trans, id: msgId };
-            }));
-
-            translationPayload['ko'] = { text: correctedKoText, id: msgId };
-            fetch(FIREBASE_URL, { method: "PATCH", body: JSON.stringify(translationPayload) });
-        }
-
-        async function fetchTranslation(text, targetLang) {
-            try {
-                const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
-                const response = await fetch(url);
-                const data = await response.json();
-                return data[0].map(item => item[0]).join("");
-            } catch (error) { return text; }
-        }
-
-        function startBroadcast() {
-            isBroadcasting = true; fullSermonText = ""; globalFinalText = ""; processedLength = 0; unprocessedText = ""; currentSentenceId = Date.now();
-            recognition.start(); document.getElementById('startBtn').style.display = 'none'; document.getElementById('stopBtn').style.display = 'inline-block';
-            logMessage("🎙️ 자체 교정형 무제한 송출기 가동 시작!");
-
-            silenceTimer = setInterval(() => {
-                if (isBroadcasting) {
-                    let silenceDuration = Date.now() - lastSpeechTime;
-                    if (silenceDuration > 2500 && unprocessedText.trim().length > 0) {
-                        let sentenceToProcess = unprocessedText.trim();
-                        processedLength += unprocessedText.length;
-                        unprocessedText = "";
-                        fullSermonText += sentenceToProcess + " ";
-                        let idToProcess = currentSentenceId;
-                        currentSentenceId = Date.now();
-                        processSentenceLocally(sentenceToProcess, idToProcess);
-                    }
-                }
-            }, 500);
-        }
-        
-        async function stopBroadcast() {
-            isBroadcasting = false; clearInterval(silenceTimer); recognition.stop();
-            document.getElementById('startBtn').style.display = 'inline-block'; document.getElementById('stopBtn').style.display = 'none';
-            logMessage("⏹️ 방송 종료. 요약 파일 생성은 외부 API가 필요하므로 생략합니다.");
-        }
-
-        function logMessage(msg, isAi = false) {
-            const box = document.getElementById('logBox');
-            box.innerHTML += `<div class="${isAi ? 'ai-text' : 'ko-text'}">${msg}</div>`;
-            box.scrollTop = box.scrollHeight;
+        // 문장이 완성되면 자체 교정을 거쳐 전송
+        function processAsIWait(text) {
+            let match = text.match(/(습니다|합니다|하십니다|바랍니다|아멘|까요|지요|네요|어요|해요|입니다|니다|은데|는데|지만|거든요|더라|이르되|하되|하니라|나니|도다|거늘|지라|가라사대)[ \.\,\?\!]+/);
+            if (match) {
+                let sentence = text.split(match[0])[0] + match[0];
+                let corrected = sentence.replace(/하나님 의/g, "하나님의");
+                
+                document.getElementById('logBox').innerHTML += `<div>🎤 원본: ${sentence}</div><div>✨ 교정: ${corrected}</div>`;
+                // 번역 및 전송...
+            }
         }
     </script>
 </body>
