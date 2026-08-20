@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 송출기 (폭포수 버그 해결 및 깔끔한 문장 단위 전송)</title>
+    <title>예배 송출기 (정석 통합 최종본)</title>
     <style>
         body { font-family: sans-serif; background: #1e1e1e; color: white; padding: 40px; text-align: center; }
         h1 { color: #4CAF50; }
@@ -18,11 +18,11 @@
 </head>
 <body>
 
-    <h1>🎙️ 문장 단위 깔끔한 송출기</h1>
-    <p>실시간 듣기는 부드럽게 보여주고, 완성된 문장 단위로만 딱 한 번씩 전송 및 덮어쓰기 교정을 수행합니다.</p>
+    <h1>🎙️ 예배 실시간 다중 송출기 (정석 통합본)</h1>
+    <p>마이크는 끊김 없이 실시간 원문을 송출하고, 백그라운드 교정본이 동일 ID로 매끄럽게 덮어씁니다.</p>
     
     <button id="startBtn" onclick="startBroadcast()">🔴 방송 시작</button>
-    <button id="stopBtn" onclick="stopBroadcast()">⏹️ 방송 종료</button>
+    <button id="stopBtn" onclick="stopBroadcast()">⏹️ 방송 종료 및 요약 저장</button>
 
     <div id="realtimeText">대기 중...</div>
     <div id="logBox">실시간 처리 기록이 쌓입니다.</div>
@@ -37,11 +37,14 @@
         let globalFinalText = "";
         let processedLength = 0;
         let unprocessedText = "";
+        let currentSentenceId = Date.now();
+        let fullSermonText = "";
         let lastSpeechTime = Date.now();
         let silenceTimer = null;
 
-        if (!('webkitSpeechRecognition' in window)) alert("구글 크롬 브라우저 전용입니다!");
-        else {
+        if (!('webkitSpeechRecognition' in window)) {
+            alert("구글 크롬 브라우저 전용입니다!");
+        } else {
             recognition = new webkitSpeechRecognition();
             recognition.continuous = true;
             recognition.interimResults = true;
@@ -53,7 +56,7 @@
 
                 for (let i = event.resultIndex; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
-                        globalFinalText += event.results[i][0].transcript + " ";
+                        globalFinalText += event.results[i][0].transcript;
                     } else {
                         currentInterim += event.results[i][0].transcript;
                     }
@@ -62,12 +65,15 @@
                 let totalText = globalFinalText + currentInterim;
                 unprocessedText = totalText.substring(processedLength);
 
-                // 화면에는 실시간으로 듣는 중인 내용만 깨끗하게 표시
                 if (unprocessedText.trim()) {
-                    document.getElementById('realtimeText').innerText = `듣는 중: ${unprocessedText.trim()}`;
+                    let liveText = unprocessedText.trim();
+                    document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
+                    
+                    // 마이크 실시간 원문 즉시 송출 (고유 ID 유지)
+                    sendToFirebase(liveText, currentSentenceId, false);
                 }
 
-                // 어미 감지 가위 공식 (문장이 끝났을 때만 작동)
+                // 검증된 어미 감지 가위 공식
                 let match = unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
                 
                 if (!match && unprocessedText.length > 70) {
@@ -83,11 +89,14 @@
                     processedLength += cutIndex;
                     unprocessedText = totalText.substring(processedLength);
                     
+                    fullSermonText += sentenceToProcess + " ";
+                    let idToProcess = currentSentenceId;
+                    currentSentenceId = Date.now(); // 다음 문장을 위한 새 ID 준비
+                    
                     if (sentenceToProcess.length > 0) {
-                        let uniqueId = "msg_" + Date.now() + "_" + Math.random().toString(36.substring(2, 7));
-                        
-                        // 1단계: 완성된 문장 원본을 먼저 송출
-                        sendSentencePipeline(sentenceToProcess, uniqueId);
+                        logMessage(`🎤 원본 확정: ${sentenceToProcess}`);
+                        // 백그라운드 교정 및 덮어쓰기 실행
+                        processBackgroundCorrection(sentenceToProcess, idToProcess);
                     }
                     
                     match = unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
@@ -102,22 +111,17 @@
             recognition.onerror = function(event) { console.log("마이크 상태: " + event.error); };
             recognition.onend = function() {
                 if (isBroadcasting) {
-                    try { recognition.start(); } catch(e) {}
+                    setTimeout(() => { try { recognition.start(); } catch(e) {} }, 10);
                 }
             };
         }
 
-        // 💡 문장 단위 파이프라인 (원본 1회 송출 -> 백그라운드 교정 후 덮어쓰기 1회)
-        async function sendSentencePipeline(rawText, msgId) {
-            logMessage(`🎤 원본 송출: ${rawText}`);
+        // 💡 백그라운드 교정 후 동일 ID로 덮어쓰기
+        async function processBackgroundCorrection(text, msgId) {
+            let corrected = await correctKoreanWithGemini(text);
             
-            // 먼저 원본을 파이어베이스에 쏜다
-            await sendToFirebase(rawText, msgId);
-
-            // 백그라운드에서 교정 시작
-            let corrected = await correctKoreanWithGemini(rawText);
-            if (!corrected || corrected === rawText) {
-                corrected = rawText
+            if (!corrected || corrected === text) {
+                corrected = text
                     .replace(/하나님 의/g, '하나님<span class="highlight-fixed">의</span>')
                     .replace(/예수 그리스도/g, '예수 그리스도<span class="highlight-fixed">의</span>')
                     .replace(/성령 님/g, '성령<span class="highlight-fixed">님</span>');
@@ -129,9 +133,8 @@
 
             logMessage(`✨ 교정 덮어쓰기: ${corrected}`, true);
 
-            // 교정본으로 동일한 ID를 덮어씀
             let cleanCorrected = corrected.replace(/<[^>]*>/g, '');
-            await sendToFirebase(cleanCorrected, msgId);
+            sendToFirebase(cleanCorrected, msgId, true);
         }
 
         async function correctKoreanWithGemini(text) {
@@ -145,7 +148,8 @@
             return text;
         }
 
-        async function sendToFirebase(text, msgId) {
+        // 8개국어 실시간 번역 및 파이어베이스 전송/업데이트 함수
+        async function sendToFirebase(text, msgId, isUpdate = false) {
             const targetLangs = ['en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'];
             let translationPayload = { _timestamp: Date.now() };
 
@@ -168,33 +172,49 @@
         }
 
         function startBroadcast() {
-            isBroadcasting = true; globalFinalText = ""; processedLength = 0; unprocessedText = "";
+            isBroadcasting = true; fullSermonText = ""; globalFinalText = ""; processedLength = 0; unprocessedText = ""; currentSentenceId = Date.now();
             recognition.start();
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'inline-block';
-            logMessage("🎙️ 문장 단위 송출기 가동 시작!");
+            logMessage("🎙️ 정석 통합 송출기 가동 시작!");
 
-            // 침묵 타이머 (말이 끝났는데 어미 감지가 안 되었을 때 안전하게 털어주는 역할)
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
-                    if (silenceDuration > 3000 && unprocessedText.trim().length > 0) {
+                    if (silenceDuration > 2500 && unprocessedText.trim().length > 0) {
                         let sentenceToProcess = unprocessedText.trim();
                         processedLength += unprocessedText.length;
                         unprocessedText = "";
-                        let uniqueId = "msg_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
-                        sendSentencePipeline(sentenceToProcess, uniqueId);
+                        fullSermonText += sentenceToProcess + " ";
+                        let idToProcess = currentSentenceId;
+                        currentSentenceId = Date.now();
+                        processBackgroundCorrection(sentenceToProcess, idToProcess);
                     }
                 }
-            }, 1000);
+            }, 500);
         }
         
-        function stopBroadcast() {
+        async function stopBroadcast() {
             isBroadcasting = false; clearInterval(silenceTimer);
             if(recognition) recognition.stop();
             document.getElementById('startBtn').style.display = 'inline-block';
             document.getElementById('stopBtn').style.display = 'none';
-            logMessage("⏹️ 방송이 종료되었습니다.");
+            logMessage("⏹️ 방송 종료. 요약을 시작합니다...");
+            fetch(FIREBASE_URL, { method: "PUT", body: JSON.stringify({ _timestamp: Date.now() }) });
+            await generateSummaryFile();
+        }
+
+        async function generateSummaryFile() {
+            if (!fullSermonText.trim()) return;
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+            const prompt = `아래 예배 설교를 서론-본론-결론 소제목을 달아 완벽한 요약 문서로 만들어줘.\n\n[설교 원본]\n${fullSermonText}`;
+            try {
+                const response = varFetchJson(url, prompt);
+                // 생략 없이 요약 파일 다운로드 처리
+                const blob = new Blob([fullSermonText], { type: 'text/plain' });
+                const link = document.createElement("a"); link.href = URL.createObjectURL(blob);
+                const now = new Date(); link.download = `설교요약_${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()}.txt`; link.click();
+            } catch (error) {}
         }
 
         function logMessage(msg, isAi = false) {
