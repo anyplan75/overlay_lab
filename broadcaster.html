@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>실시간 예배 송출기 (AI 백그라운드 교정)</title>
+    <title>최종 완성 예배 송출기 (문맥 강제 컷팅 + 불사조 마이크)</title>
     <style>
         body { font-family: sans-serif; background: #1e1e1e; color: white; padding: 40px; text-align: center; }
         h1 { color: #4CAF50; }
@@ -17,8 +17,8 @@
 </head>
 <body>
 
-    <h1>🎙️ 논스톱 AI 교정 송출기</h1>
-    <p>마이크는 절대 멈추지 않고, AI 교정은 백그라운드에서 조용히 처리됩니다.</p>
+    <h1>🎙️ 스마트 문맥 컷팅 송출기</h1>
+    <p>문맥이 완료되면 지체 없이 즉시 잘라서 AI 교정과 통역으로 던집니다.</p>
     
     <button id="startBtn" onclick="startBroadcast()">🔴 방송 시작</button>
     <button id="stopBtn" onclick="stopBroadcast()">⏹️ 방송 종료 및 요약 저장</button>
@@ -27,6 +27,7 @@
     <div id="logBox">AI 처리 기록이 쌓입니다.</div>
 
     <script>
+        // 👉 여기에 형님의 제미나이 API 키를 넣어주세요.
         const GEMINI_API_KEY = "형님의_API_키를_넣어주세요";
         const FIREBASE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/subtitles.json";
         
@@ -51,7 +52,7 @@
                     else interimTranscript += event.results[i][0].transcript;
                 }
 
-                // 💡 1. 0.1초 단위 한국어 실시간 쏘기 (절대 안 멈춤)
+                // 💡 1. 0.1초 단위 한국어 실시간 쏘기
                 let currentKoText = finalTranscript || interimTranscript;
                 if (currentKoText.trim()) {
                     document.getElementById('realtimeText').innerText = `듣는 중: ${currentKoText}`;
@@ -61,28 +62,54 @@
                     }).catch(e => {});
                 }
 
-                // 💡 2. 문장이 끝나면?
+                // 💡 2. 준이형님의 천재적인 기획: "스마트 문맥 강제 컷팅"
+                // 아직 문장이 완전히 안 끝났어도, 길이가 어느 정도 되고(10글자 이상) 끝맺는 말(어미)이 나오면 강제로 잘라버립니다!
+                if (!finalTranscript && interimTranscript.trim().length > 10) {
+                    const text = interimTranscript.trim();
+                    const endings = ["습니다", "합니다", "하십니다", "바랍니다", "축원합니다", "할지어다", "아멘", "까요", "을까요", "잖아요", "대요", "지요", "네요", "어요", "해요", "입니다", "옵니다", "나이다"];
+                    
+                    const hasEnding = endings.some(ending => text.endsWith(ending));
+                    
+                    if (hasEnding) {
+                        // 15초를 기다리지 않고 강제로 마이크를 한 번 스톱시킵니다. (그러면 즉시 finalTranscript로 확정되어 아래 로직으로 넘어갑니다)
+                        recognition.stop();
+                    }
+                }
+
+                // 💡 3. 문장이 확정되었을 때 (마이크가 자연스럽게 끊겼거나, 위에서 강제로 잘랐거나)
                 if (finalTranscript) {
                     const sentenceToProcess = finalTranscript;
                     const idToProcess = currentSentenceId;
                     
-                    // 핵심 수정: 인공지능을 기다리지 않고, 당장 다음 문장을 위해 번호표부터 바꿉니다! (마이크 해방)
+                    // 곧바로 다음 문장을 듣기 위해 새로운 번호표 발급
                     currentSentenceId = Date.now();
                     fullSermonText += sentenceToProcess + " ";
                     
-                    // 교정과 번역은 백그라운드(뒷단)로 던져버립니다.
+                    // 인공지능 교정과 다국어 통역은 뒷단(백그라운드)으로 던집니다!
                     processSentenceAsync(sentenceToProcess, idToProcess);
                 }
             };
 
-            recognition.onend = function() { if (isBroadcasting) recognition.start(); };
+            // 💡 4. 마이크 에러 방어막
+            recognition.onerror = function(event) {
+                console.log("마이크 상태 경고: " + event.error);
+            };
+
+            // 💡 5. 불사조 마이크: 마이크가 꺼지면 0.3초 숨 고르고 무조건 강제 부활!
+            recognition.onend = function() {
+                if (isBroadcasting) {
+                    setTimeout(() => {
+                        try { recognition.start(); } catch(e) {}
+                    }, 300); // 목사님이 어미를 마치고 숨을 쉬는 그 찰나(0.3초)에 맞춰 다시 마이크를 켭니다.
+                }
+            };
         }
 
         // 🧠 마이크와 완벽히 분리된 백그라운드 AI 처리 공장
         async function processSentenceAsync(text, msgId) {
-            logMessage(`🎤 원본: ${text}`);
+            logMessage(`🎤 원본 확정: ${text}`);
             let correctedKoText = await correctKoreanWithGemini(text);
-            logMessage(`✨ 교정완료: ${correctedKoText}`, true);
+            logMessage(`✨ AI 교정본: ${correctedKoText}`, true);
             
             const targetLangs = ['en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'];
             let translationPayload = { _timestamp: Date.now() };
@@ -116,7 +143,7 @@
             } catch (error) { return text; }
         }
 
-        function startBroadcast() { isBroadcasting = true; fullSermonText = ""; currentSentenceId = Date.now(); recognition.start(); document.getElementById('startBtn').style.display = 'none'; document.getElementById('stopBtn').style.display = 'inline-block'; logMessage("🎙️ 논스톱 방송 시작!"); }
+        function startBroadcast() { isBroadcasting = true; fullSermonText = ""; currentSentenceId = Date.now(); recognition.start(); document.getElementById('startBtn').style.display = 'none'; document.getElementById('stopBtn').style.display = 'inline-block'; logMessage("🎙️ 논스톱 스마트 방송 시작!"); }
         
         async function stopBroadcast() { isBroadcasting = false; recognition.stop(); document.getElementById('startBtn').style.display = 'inline-block'; document.getElementById('stopBtn').style.display = 'none'; logMessage("⏹️ 방송 종료. 요약을 시작합니다..."); fetch(FIREBASE_URL, { method: "PUT", body: JSON.stringify({ _timestamp: Date.now() }) }); await generateSummaryFile(); }
 
