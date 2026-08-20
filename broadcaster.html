@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 송출기 (받아쓰기 완벽 복구형)</title>
+    <title>예배 송출기 (받아쓰기 논스톱 독립형)</title>
     <style>
         body { font-family: sans-serif; background: #1e1e1e; color: white; padding: 40px; text-align: center; }
         h1 { color: #4CAF50; }
@@ -18,8 +18,8 @@
 </head>
 <body>
 
-    <h1>🎙️ 받아쓰기 완벽 복구형 송출기</h1>
-    <p>가장 잘 되던 원본 받아쓰기 엔진의 수신율을 완벽히 되살린 버전입니다.</p>
+    <h1>🎙️ 받아쓰기 논스톱 독립형 송출기</h1>
+    <p>받아쓰기와 송출은 절대 멈추지 않도록 완전히 독립시키고, 교정과 빨간색 표시는 백그라운드에서 안전하게 처리합니다.</p>
     
     <button id="startBtn" onclick="startBroadcast()">🔴 방송 시작</button>
     <button id="stopBtn" onclick="stopBroadcast()">⏹️ 방송 종료 및 요약 저장</button>
@@ -34,7 +34,6 @@
         let recognition;
         let isBroadcasting = false;
         
-        // 💡 가장 완벽하게 작동하던 원본 변수 구조
         let globalFinalText = "";
         let processedLength = 0;
         let unprocessedText = "";
@@ -66,12 +65,15 @@
                 let totalText = globalFinalText + currentInterim;
                 unprocessedText = totalText.substring(processedLength);
 
-                // 💡 목소리가 들어오는 즉시 화면에 생생하게 박히도록 복구
+                // 💡 [핵심] 받아쓰기와 파이어베이스 전송은 막힘없이 즉시 실행
                 if (unprocessedText.trim()) {
-                    document.getElementById('realtimeText').innerText = `듣는 중: ${unprocessedText.trim()}`;
+                    let liveText = unprocessedText.trim();
+                    document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
+                    
+                    // 논스톱 전송 (에러가 나도 받아쓰기 엔진을 멈추지 않음)
                     fetch(FIREBASE_URL, {
                         method: "PATCH",
-                        body: JSON.stringify({ ko: { text: unprocessedText.trim(), id: currentSentenceId }, _timestamp: Date.now() })
+                        body: JSON.stringify({ ko: { text: liveText, id: currentSentenceId }, _timestamp: Date.now() })
                     }).catch(e => {});
                 }
 
@@ -99,7 +101,8 @@
                     currentSentenceId = Date.now();
                     
                     if (sentenceToProcess.length > 0) {
-                        processSentenceNormal(sentenceToProcess, idToProcess);
+                        // 💡 교정 및 번역은 백그라운드(비동기)로 던져두고 메인 받아쓰기는 기다리지 않음!
+                        processBackgroundAsync(sentenceToProcess, idToProcess);
                     }
                     
                     match = unprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|을까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요|으리라|하리라|새요|셔요|십시다|읍시다|더라|이르되|하되|하니라|나니|도다|거늘|지라|으매|가라사대|하옵소서)($|[ \.\,\?\!]+)/);
@@ -119,14 +122,23 @@
             };
         }
 
-        async function processSentenceNormal(text, msgId) {
+        // 💡 백그라운드 독립 처리 함수 (메인 받아쓰기를 절대 방해하지 않음)
+        async function processBackgroundAsync(text, msgId) {
             logMessage(`🎤 원본: ${text}`);
             
-            // 안전한 자체 교정 및 빨간색 표시
-            let correctedKoText = text
-                .replace(/하나님 의/g, '하나님<span class="highlight-fixed">의</span>')
-                .replace(/예수 그리스도/g, '예수 그리스도<span class="highlight-fixed">의</span>')
-                .replace(/성령 님/g, '성령<span class="highlight-fixed">님</span>');
+            // AI 교정 시도 (실패하거나 느리면 자체 규칙으로 즉시 대체하고 빨간색 적용)
+            let correctedKoText = await correctKoreanWithGemini(text);
+            if (!correctedKoText || correctedKoText === text) {
+                correctedKoText = text
+                    .replace(/하나님 의/g, '하나님<span class="highlight-fixed">의</span>')
+                    .replace(/예수 그리스도/g, '예수 그리스도<span class="highlight-fixed">의</span>')
+                    .replace(/성령 님/g, '성령<span class="highlight-fixed">님</span>');
+            } else {
+                // AI가 고쳐온 경우 주요 단어를 빨간색으로 시각화
+                correctedKoText = correctedKoText
+                    .replace(/하나님의/g, '하나님<span class="highlight-fixed">의</span>')
+                    .replace(/성령님/g, '성령<span class="highlight-fixed">님</span>');
+            }
 
             logMessage(`✨ 교정본: ${correctedKoText}`, true);
             
@@ -134,13 +146,25 @@
             let translationPayload = { _timestamp: Date.now() };
 
             await Promise.all(targetLangs.map(async (lang) => {
-                let trans = await fetchTranslation(text, lang);
+                let cleanTextForTrans = correctedKoText.replace(/<[^>]*>/g, '');
+                let trans = await fetchTranslation(cleanTextForTrans, lang);
                 translationPayload[lang] = { text: trans, id: msgId };
             }));
 
             let cleanCorrected = correctedKoText.replace(/<[^>]*>/g, '');
             translationPayload['ko'] = { text: cleanCorrected, id: msgId };
             fetch(FIREBASE_URL, { method: "PATCH", body: JSON.stringify(translationPayload) }).catch(e => {});
+        }
+
+        async function correctKoreanWithGemini(text) {
+            try {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+                const prompt = `다음 텍스트의 오탈자만 교정해. 결과만 출력:\n${text}`;
+                const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
+                const result = await response.json();
+                if (result.candidates && result.candidates.length > 0) return result.candidates[0].content.parts[0].text.trim();
+            } catch (error) {}
+            return text;
         }
 
         async function fetchTranslation(text, targetLang) {
@@ -157,7 +181,7 @@
             recognition.start();
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'inline-block';
-            logMessage("🎙️ 받아쓰기 복구형 송출기 가동 시작!");
+            logMessage("🎙️ 논스톱 독립형 송출기 가동 시작!");
 
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
@@ -169,7 +193,7 @@
                         fullSermonText += sentenceToProcess + " ";
                         let idToProcess = currentSentenceId;
                         currentSentenceId = Date.now();
-                        processSentenceNormal(sentenceToProcess, idToProcess);
+                        processBackgroundAsync(sentenceToProcess, idToProcess);
                     }
                 }
             }, 500);
