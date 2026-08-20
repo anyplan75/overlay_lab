@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 송출기 (무중단 버퍼 컷팅)</title>
+    <title>예배 송출기 (정밀 문맥 컷팅 적용)</title>
     <style>
         body { font-family: sans-serif; background: #1e1e1e; color: white; padding: 40px; text-align: center; }
         h1 { color: #4CAF50; }
@@ -17,8 +17,8 @@
 </head>
 <body>
 
-    <h1>🎙️ 무손실 버퍼 컷팅 송출기</h1>
-    <p>마이크는 절대 멈추지 않고, 텍스트 버퍼에서 문맥을 찾아내어 싹둑 잘라냅니다.</p>
+    <h1>🎙️ 정밀 문맥 컷팅 송출기</h1>
+    <p>오디오 유실 없이, 완벽한 문장 끝맺음(어미)에서만 깔끔하게 잘라서 통역합니다.</p>
     
     <button id="startBtn" onclick="startBroadcast()">🔴 방송 시작</button>
     <button id="stopBtn" onclick="stopBroadcast()">⏹️ 방송 종료 및 요약 저장</button>
@@ -27,17 +27,17 @@
     <div id="logBox">AI 처리 및 번역 기록이 쌓입니다.</div>
 
     <script>
+        // 👉 형님의 제미나이 API 키를 넣어주세요.
         const GEMINI_API_KEY = "형님의_API_키를_넣어주세요";
         const FIREBASE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/subtitles.json";
         
         let recognition;
         let isBroadcasting = false;
         
-        // 💡 형님의 기획: 마이크를 끄지 않고 관리하는 '거대한 텍스트 임시 바구니'
-        let globalMasterText = "";      // 이전 세션에서 확정된 모든 텍스트
-        let currentSessionFinalText = ""; // 현재 세션에서 확정된 텍스트
-        let processedLength = 0;        // 우리가 가위로 잘라서 번역기로 보낸 글자의 총 길이
-        let globalUnprocessedText = ""; // 아직 잘리지 않고 바구니에 남아있는 실시간 텍스트
+        let globalMasterText = "";
+        let currentSessionFinalText = "";
+        let processedLength = 0;
+        let globalUnprocessedText = "";
 
         let currentSentenceId = Date.now();
         let fullSermonText = "";
@@ -56,17 +56,15 @@
                 currentSessionFinalText = "";
                 let interimTranscript = "";
 
-                // 마이크가 듣고 있는 소리를 임시 바구니에 계속 담습니다 (Stop 명령 없음!)
                 for (let i = 0; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) currentSessionFinalText += event.results[i][0].transcript;
                     else interimTranscript += event.results[i][0].transcript;
                 }
 
-                // 전체 텍스트에서 '이미 번역기로 보낸 길이(processedLength)'만큼을 빼면, 새로 번역해야 할 텍스트만 남습니다.
                 let currentFullText = globalMasterText + currentSessionFinalText + interimTranscript;
                 globalUnprocessedText = currentFullText.substring(processedLength);
 
-                // 1. 실시간 한국어 송출 (가위로 잘리기 전까지는 화면에 계속 타다닥 찍힙니다)
+                // 1. 실시간 한국어 송출 (가위로 잘리기 전까지 타다닥 찍힘)
                 if (globalUnprocessedText.trim()) {
                     document.getElementById('realtimeText').innerText = `듣는 중: ${globalUnprocessedText.trim()}`;
                     fetch(FIREBASE_URL, {
@@ -75,30 +73,21 @@
                     }).catch(e => {});
                 }
 
-                // 2. 가위치기 (문맥 컷팅)
-                const endings = ["습니다", "합니다", "하십니다", "바랍니다", "축원합니다", "할지어다", "아멘", "까요", "잖아요", "대요", "지요", "네요", "어요", "해요", "입니다", "나이다", "까?", "요?", "다."];
+                // 💡 2. 초정밀 가위치기 (어미 + 띄어쓰기 감지)
+                // 목사님들이 쓰시는 거의 모든 어미를 추가했습니다. 이 어미들 뒤에 띄어쓰기나 문장부호가 올 때만 싹둑 자릅니다!
+                let match = globalUnprocessedText.match(/(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|까요|잖아요|대요|지요|네요|어요|해요|입니다|나이다|니다|은데|는데|지만|거든요|은데요|는데요|고요|죠|서요)[ \.\,\?\!]*($| )/);
                 
-                let foundCutIndex = -1;
-                for (let ending of endings) {
-                    let idx = globalUnprocessedText.indexOf(ending);
-                    if (idx !== -1) {
-                        let potentialCut = idx + ending.length;
-                        if (foundCutIndex === -1 || potentialCut < foundCutIndex) {
-                            foundCutIndex = potentialCut; // 가장 먼저 나온 어미의 위치를 찾습니다.
-                        }
-                    }
-                }
-
-                // 임시 바구니에서 어미를 발견했다면? 마이크는 내버려 두고 글자만 잘라서 던집니다!
-                if (foundCutIndex !== -1) {
+                if (match) {
+                    // 어미가 끝나는 정확한 위치를 찾아냅니다.
+                    let foundCutIndex = match.index + match[1].length;
                     let sentenceToProcess = globalUnprocessedText.substring(0, foundCutIndex).trim();
                     
-                    processedLength += foundCutIndex; // 자른 만큼 기준선을 뒤로 옮깁니다.
+                    processedLength += foundCutIndex;
                     globalUnprocessedText = currentFullText.substring(processedLength);
                     
                     fullSermonText += sentenceToProcess + " ";
                     let idToProcess = currentSentenceId;
-                    currentSentenceId = Date.now(); // 다음 문장을 위해 새 번호표 발급
+                    currentSentenceId = Date.now();
                     
                     processSentenceAsync(sentenceToProcess, idToProcess);
                 }
@@ -106,12 +95,10 @@
 
             recognition.onerror = function(event) { console.log("마이크 경고: " + event.error); };
             
-            // 크롬이 15초 제한 등으로 스스로 마이크를 꺼버렸을 때만 작동하는 안전장치
             recognition.onend = function() {
                 if (isBroadcasting) {
                     globalMasterText += currentSessionFinalText;
                     currentSessionFinalText = "";
-                    // 마이크가 꺼지면 0.01초 만에 즉시 다시 켭니다.
                     setTimeout(() => { try { recognition.start(); } catch(e) {} }, 10);
                 }
             };
@@ -157,19 +144,19 @@
         function startBroadcast() {
             isBroadcasting = true; fullSermonText = ""; globalMasterText = ""; currentSessionFinalText = ""; processedLength = 0; globalUnprocessedText = ""; currentSentenceId = Date.now();
             recognition.start(); document.getElementById('startBtn').style.display = 'none'; document.getElementById('stopBtn').style.display = 'inline-block';
-            logMessage("🎙️ 무손실 버퍼 방송 시작!");
+            logMessage("🎙️ 정밀 문맥 컷팅 방송 시작!");
 
-            // 💡 3. 침묵 가위치기: 어미가 없더라도 1.5초간 말씀이 멈추면 임시 바구니를 털어서 보냅니다.
+            // 💡 3. 안전망 타이머: 목사님이 2.5초 이상 숨을 고르실 때만, 남아있는 글자(10자 이상)를 보냅니다.
             silenceTimer = setInterval(() => {
-                if (isBroadcasting && (Date.now() - lastSpeechTime > 1500)) {
-                    if (globalUnprocessedText.trim().length > 0) {
+                if (isBroadcasting && (Date.now() - lastSpeechTime > 2500)) {
+                    if (globalUnprocessedText.trim().length > 10) {
                         let sentenceToProcess = globalUnprocessedText.trim();
                         processedLength += globalUnprocessedText.length;
                         
                         fullSermonText += sentenceToProcess + " ";
                         let idToProcess = currentSentenceId;
                         currentSentenceId = Date.now();
-                        globalUnprocessedText = ""; // 바구니 비우기
+                        globalUnprocessedText = "";
                         
                         processSentenceAsync(sentenceToProcess, idToProcess);
                     }
