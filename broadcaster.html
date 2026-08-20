@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <title>예배 자막 송출기</title>
-    <!-- 형님이 따로 관리하시는 화면 꾸밈 문서를 연결합니다 -->
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -15,16 +14,10 @@
     <button id="startBtn" class="btn" onclick="startBroadcast()">🔴 방송 시작</button>
     <button id="stopBtn" class="btn" onclick="stopBroadcast()">⏹️ 방송 종료</button>
 
-    <!-- 복잡한 기록창을 없애고, 현재 상태만 깔끔하게 보여줍니다 -->
-    <div style="margin-top: 40px; padding: 20px; background: #222; border-radius: 10px;">
-        <div style="color: #aaa; font-size: 16px; margin-bottom: 5px;">[지금 듣고 있는 내용]</div>
-        <div id="realtimeText" style="color: #ffeb3b; font-size: 24px; min-height: 35px; font-weight: bold;">대기 중...</div>
-        
-        <div style="margin-top: 30px; border-top: 1px solid #444; padding-top: 20px;">
-            <div style="color: #aaa; font-size: 16px; margin-bottom: 5px;">[방금 송출 및 교정된 내용]</div>
-            <div id="finalText" style="color: #4CAF50; font-size: 24px; min-height: 35px; font-weight: bold;">없음</div>
-        </div>
-    </div>
+    <div id="realtimeText">듣는 중...</div>
+    
+    <!-- 문장이 위로 밀려 올라가는 기록창 -->
+    <div id="logBox" style="background: #000; padding: 20px; border-radius: 8px; height: 350px; overflow-y: auto; margin-top: 20px; text-align: left; line-height: 1.6; font-size: 18px;"></div>
 
     <script>
         const GEMINI_API_KEY = "형님의_API_키를_넣어주세요";
@@ -47,10 +40,7 @@
                 folderHandle = await window.showDirectoryPicker();
                 document.getElementById('folderBtn').style.display = 'none';
                 document.getElementById('startBtn').style.display = 'inline-block';
-                document.getElementById('finalText').innerText = "📁 폴더 연결 완료. 방송을 시작할 수 있습니다.";
-            } catch (error) {
-                document.getElementById('finalText').innerText = "❌ 폴더 선택이 취소되었습니다.";
-            }
+            } catch (error) { console.log("폴더 연결 취소"); }
         }
 
         async function saveTextToFile(filename, content) {
@@ -60,9 +50,7 @@
                 const writable = await fileHandle.createWritable();
                 await writable.write(content);
                 await writable.close();
-            } catch (error) {
-                console.log("파일 저장 실패:", filename);
-            }
+            } catch (error) {}
         }
 
         if (!('webkitSpeechRecognition' in window)) {
@@ -90,7 +78,7 @@
 
                 if (unprocessedText.trim()) {
                     let liveText = unprocessedText.trim();
-                    document.getElementById('realtimeText').innerText = liveText;
+                    document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
                     sendToFirebaseAndFile(liveText, currentSentenceId, false);
                 }
 
@@ -117,7 +105,9 @@
                     currentSentenceId = Date.now();
                     
                     if (sentenceToProcess.length > 0) {
-                        document.getElementById('finalText').innerText = `🎤 원본: ${sentenceToProcess}`;
+                        // 1. 듣는 즉시 화면에 원문을 기록합니다.
+                        appendLogMessage(sentenceToProcess, idToProcess, false);
+                        // 2. 조용히 뒷단 교정을 시작합니다.
                         processBackgroundCorrection(sentenceToProcess, idToProcess);
                     }
                     
@@ -138,21 +128,38 @@
             };
         }
 
+        // 💡 글자가 나왔다 사라지는 것이 아니라, 원래 있던 자리에 부드럽게 덮어써집니다.
+        function appendLogMessage(text, msgId, isCorrected) {
+            const box = document.getElementById('logBox');
+            let targetDiv = document.getElementById(`log_${msgId}`);
+            
+            if (!targetDiv) {
+                targetDiv = document.createElement('div');
+                targetDiv.id = `log_${msgId}`;
+                targetDiv.style.marginBottom = "8px";
+                targetDiv.style.transition = "color 0.5s ease"; // 부드러운 전환 효과
+                box.appendChild(targetDiv);
+                box.scrollTop = box.scrollHeight;
+            }
+            
+            if (isCorrected) {
+                targetDiv.innerHTML = `✨ 교정됨: <span style="color:#00bcd4; font-weight:bold;">${text}</span>`;
+            } else {
+                targetDiv.innerHTML = `🎤 원본: <span style="color:#4CAF50;">${text}</span>`;
+            }
+        }
+
         async function processBackgroundCorrection(text, msgId) {
             let corrected = await correctKoreanWithGemini(text);
             
             if (!corrected || corrected === text) {
-                corrected = text
-                    .replace(/하나님 의/g, '하나님의')
-                    .replace(/예수 그리스도/g, '예수 그리스도의')
-                    .replace(/성령 님/g, '성령님');
+                corrected = text.replace(/하나님 의/g, '하나님의').replace(/예수 그리스도/g, '예수 그리스도의').replace(/성령 님/g, '성령님');
             } else {
-                corrected = corrected
-                    .replace(/하나님의/g, '하나님의')
-                    .replace(/성령님/g, '성령님');
+                corrected = corrected.replace(/하나님의/g, '하나님의').replace(/성령님/g, '성령님');
             }
 
-            document.getElementById('finalText').innerHTML = `✨ 교정됨: ${corrected}`;
+            // 3. 교정된 결과를 화면에 깜빡임 없이 덮어씁니다.
+            appendLogMessage(corrected, msgId, true);
             let cleanCorrected = corrected.replace(/<[^>]*>/g, '');
             sendToFirebaseAndFile(cleanCorrected, msgId, true);
         }
@@ -198,8 +205,6 @@
             recognition.start();
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'inline-block';
-            document.getElementById('realtimeText').innerText = "🎙️ 송출기 가동 시작...";
-            document.getElementById('finalText').innerText = "대기 중";
 
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
@@ -211,7 +216,8 @@
                         fullSermonText += sentenceToProcess + " ";
                         let idToProcess = currentSentenceId;
                         currentSentenceId = Date.now();
-                        document.getElementById('finalText').innerText = `🎤 원본 (침묵넘김): ${sentenceToProcess}`;
+                        
+                        appendLogMessage(sentenceToProcess, idToProcess, false);
                         processBackgroundCorrection(sentenceToProcess, idToProcess);
                     }
                 }
@@ -223,25 +229,7 @@
             if(recognition) recognition.stop();
             document.getElementById('startBtn').style.display = 'inline-block';
             document.getElementById('stopBtn').style.display = 'none';
-            document.getElementById('realtimeText').innerText = "방송 종료됨";
-            
             fetch(FIREBASE_URL, { method: "PUT", body: JSON.stringify({ _timestamp: Date.now() }) });
-            await generateSummaryFile();
-        }
-
-        async function generateSummaryFile() {
-            if (!fullSermonText.trim()) return;
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-            const prompt = `아래 예배 설교를 서론-본론-결론 소제목을 달아 완벽한 요약 문서로 만들어줘.\n\n[설교 원본]\n${fullSermonText}`;
-            try {
-                const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
-                const result = await response.json();
-                let finalSummary = result.candidates ? result.candidates[0].content.parts[0].text : fullSermonText;
-                
-                const blob = new Blob([finalSummary], { type: 'text/plain' });
-                const linkElement = document.createElement("a"); linkElement.href = URL.createObjectURL(blob);
-                const now = new Date(); linkElement.download = `설교요약_${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()}.txt`; linkElement.click();
-            } catch (error) { console.log(`요약 오류: ${error}`); }
         }
     </script>
 </body>

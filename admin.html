@@ -8,132 +8,152 @@
         h1 { color: #f1c40f; }
         .card {
             background: #34495e;
-            padding: 15px 25px;
+            padding: 20px;
             margin-bottom: 15px;
             border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
         }
-        .card label {
-            font-size: 22px;
-            font-weight: bold;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 15px;
+        .global-settings {
+            display: flex; gap: 20px; align-items: center; flex-wrap: wrap; margin-top: 15px;
         }
-        input[type="checkbox"] { width: 30px; height: 30px; cursor: pointer; }
+        .global-settings select {
+            padding: 8px; font-size: 16px; border-radius: 5px; font-weight: bold;
+        }
+        .lang-row {
+            display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+            margin-top: 10px; padding-top: 10px; border-top: 1px solid #455a64;
+        }
+        .lang-label {
+            font-size: 20px; font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 10px; width: 180px;
+        }
+        input[type="checkbox"] { width: 24px; height: 24px; cursor: pointer; }
+        .input-group { display: flex; gap: 15px; align-items: center; font-size: 16px; }
         input[type="number"] {
-            width: 90px;
-            padding: 8px;
-            font-size: 20px;
-            text-align: center;
-            border-radius: 5px;
-            border: none;
-            font-weight: bold;
+            width: 70px; padding: 6px; font-size: 16px; text-align: center; border-radius: 5px; border: none; font-weight: bold;
         }
         .btn {
-            padding: 20px 30px;
-            font-size: 22px;
-            font-weight: bold;
-            background: #27ae60;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            width: 100%;
-            margin-top: 20px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            padding: 20px 30px; font-size: 22px; font-weight: bold; background: #27ae60; color: white;
+            border: none; border-radius: 8px; cursor: pointer; width: 100%; margin-top: 20px;
         }
-        .btn:hover { background: #2ecc71; }
     </style>
 </head>
 <body>
     <h1>⚙️ 예배 자막 송출 설정 (어드민)</h1>
-    <p style="font-size: 18px; color: #bdc3c7; margin-bottom: 30px;">
-        체크박스를 끄면 해당 언어는 즉시 송출 화면에서 사라집니다. 글자 크기도 나라별로 조절해 보세요.
-    </p>
-
-    <div id="controls"></div>
     
-    <button class="btn" onclick="applySettings()">💾 이 설정으로 실시간 화면 변경하기</button>
+    <!-- 원래 있으셨던 전체 화면 정렬 및 배치 기능 -->
+    <div class="card">
+        <h2 style="margin: 0 0 10px 0; color: #3498db;">🖥️ 전체 화면 구성 및 정렬</h2>
+        <div class="global-settings">
+            <label>자막 위치:
+                <select id="global_position">
+                    <option value="top">상단</option>
+                    <option value="bottom" selected>하단</option>
+                </select>
+            </label>
+            <label>자막 영역:
+                <select id="global_area">
+                    <option value="full" selected>전체 너비</option>
+                    <option value="left_40">좌측 5분의 2</option>
+                    <option value="right_40">우측 5분의 2</option>
+                </select>
+            </label>
+            <label>텍스트 정렬:
+                <select id="global_align">
+                    <option value="left">좌측 정렬</option>
+                    <option value="center" selected>중앙 정렬</option>
+                    <option value="right">우측 정렬</option>
+                </select>
+            </label>
+        </div>
+    </div>
+
+    <!-- 새롭게 추가된 언어별 크기/자간 설정 -->
+    <div class="card" id="controls">
+        <h2 style="margin: 0 0 10px 0; color: #e74c3c;">🌍 개별 언어 설정</h2>
+    </div>
+    
+    <button class="btn" onclick="applySettings()">💾 설정 즉시 적용하기</button>
     <p id="msg" style="color: #2ecc71; font-weight: bold; text-align: center; margin-top: 20px; font-size: 20px;"></p>
 
     <script>
-        // 형님의 파이어베이스 주소 아래에 settings.json 이라는 설정 전용 공간을 만듭니다.
         const SETTINGS_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/settings.json";
         
-        // 형님이 쓰시는 8개 국어 목록과 기본 글자 크기
         const languages = [
-            { code: 'ko', name: '한국어', defaultSize: 42 },
-            { code: 'en', name: '영어', defaultSize: 32 },
-            { code: 'zh-CN', name: '중국어', defaultSize: 38 },
-            { code: 'vi', name: '베트남어', defaultSize: 32 },
-            { code: 'id', name: '인도네시아어', defaultSize: 30 },
-            { code: 'ne', name: '네팔어', defaultSize: 30 },
-            { code: 'tl', name: '타갈로그어', defaultSize: 30 },
-            { code: 'ru', name: '러시아어', defaultSize: 30 }
+            { code: 'ko', name: '한국어', defaultSize: 42, defaultSpacing: -1 },
+            { code: 'en', name: '영어', defaultSize: 32, defaultSpacing: 1 },
+            { code: 'zh-CN', name: '중국어', defaultSize: 38, defaultSpacing: 1 },
+            { code: 'vi', name: '베트남어', defaultSize: 32, defaultSpacing: 0 },
+            { code: 'id', name: '인도네시아어', defaultSize: 30, defaultSpacing: 0 },
+            { code: 'ne', name: '네팔어', defaultSize: 30, defaultSpacing: 0 },
+            { code: 'tl', name: '타갈로그어', defaultSize: 30, defaultSpacing: 0 },
+            { code: 'ru', name: '러시아어', defaultSize: 30, defaultSpacing: 0 }
         ];
 
         const controlsDiv = document.getElementById('controls');
 
-        // 1. 제어판 화면(UI) 그려주기
         languages.forEach(lang => {
             controlsDiv.innerHTML += `
-                <div class="card">
-                    <label>
+                <div class="lang-row">
+                    <label class="lang-label">
                         <input type="checkbox" id="check_${lang.code}" checked>
-                        ${lang.name} 켜기
+                        ${lang.name}
                     </label>
-                    <div>
-                        글자 크기: <input type="number" id="size_${lang.code}" value="${lang.defaultSize}"> px
+                    <div class="input-group">
+                        <div>크기: <input type="number" id="size_${lang.code}" value="${lang.defaultSize}"> px</div>
+                        <div>자간: <input type="number" id="spacing_${lang.code}" value="${lang.defaultSpacing}" step="0.5"> px</div>
                     </div>
                 </div>
             `;
         });
 
-        // 2. 파이어베이스에서 마지막에 저장했던 설정 불러오기
         async function loadSettings() {
             try {
                 const res = await fetch(SETTINGS_URL);
                 const data = await res.json();
                 if (data) {
+                    // 전체 설정 불러오기
+                    if (data.global) {
+                        document.getElementById('global_position').value = data.global.position || 'bottom';
+                        document.getElementById('global_area').value = data.global.area || 'full';
+                        document.getElementById('global_align').value = data.global.align || 'center';
+                    }
+                    // 개별 언어 설정 불러오기
                     languages.forEach(lang => {
                         if (data[lang.code]) {
                             document.getElementById(`check_${lang.code}`).checked = data[lang.code].show;
-                            document.getElementById(`size_${lang.code}`).value = data[lang.code].fontSize;
+                            document.getElementById(`size_${lang.code}`).value = data[lang.code].fontSize || lang.defaultSize;
+                            document.getElementById(`spacing_${lang.code}`).value = data[lang.code].letterSpacing || lang.defaultSpacing;
                         }
                     });
                 }
-            } catch (e) { console.log("기존 설정을 불러오지 못했습니다."); }
+            } catch (e) {}
         }
 
-        // 3. 버튼을 누르면 파이어베이스로 설정값 쏘기
         async function applySettings() {
-            let currentSettings = { _timestamp: Date.now() };
+            let currentSettings = {
+                _timestamp: Date.now(),
+                global: {
+                    position: document.getElementById('global_position').value,
+                    area: document.getElementById('global_area').value,
+                    align: document.getElementById('global_align').value
+                }
+            };
             
             languages.forEach(lang => {
                 currentSettings[lang.code] = {
                     show: document.getElementById(`check_${lang.code}`).checked,
-                    fontSize: parseInt(document.getElementById(`size_${lang.code}`).value)
+                    fontSize: parseFloat(document.getElementById(`size_${lang.code}`).value),
+                    letterSpacing: parseFloat(document.getElementById(`spacing_${lang.code}`).value)
                 };
             });
 
             try {
-                await fetch(SETTINGS_URL, {
-                    method: "PUT",
-                    body: JSON.stringify(currentSettings)
-                });
+                await fetch(SETTINGS_URL, { method: "PUT", body: JSON.stringify(currentSettings) });
                 const msgBox = document.getElementById('msg');
-                msgBox.innerText = "✅ 설정이 파이어베이스로 전송되었습니다! 화면이 즉시 바뀝니다.";
-                setTimeout(() => msgBox.innerText = "", 3500);
-            } catch (e) {
-                alert("설정 전송에 실패했습니다. 인터넷을 확인해 주세요.");
-            }
+                msgBox.innerText = "✅ 설정이 실시간 화면에 반영되었습니다.";
+                setTimeout(() => msgBox.innerText = "", 3000);
+            } catch (e) { alert("설정 전송 실패"); }
         }
 
-        // 창을 열자마자 기존 설정 불러오기 실행
         loadSettings();
     </script>
 </body>
