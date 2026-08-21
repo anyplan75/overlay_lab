@@ -11,6 +11,7 @@
     </div>
     <script>
         const currentLang = 'zh-CN';
+        
         let lastTime = 0, subtitleLines = [], maxLines = 15;
         
         function updateSubtitle() {
@@ -18,22 +19,49 @@
             .then(r => r.json())
             .then(d => {
                 const c = document.getElementById('container'), s = document.getElementById('subtitle');
-                if (d && d.style && d.style.layout) { c.className = 'layout-' + d.style.layout; }
-                if (d && d.subtitles && d.subtitles._timestamp !== lastTime) {
-                    lastTime = d.subtitles._timestamp; let n = d.subtitles[currentLang];
-                    if (n) {
-                        let text = typeof n === 'object' ? n.text : n; let msgId = typeof n === 'object' ? n.id : lastTime;
-                        let existingIndex = subtitleLines.findIndex(line => line.id === msgId);
-                        if (existingIndex !== -1) { subtitleLines[existingIndex].text = text; }
-                        else { subtitleLines.push({id: msgId, text: text}); while (subtitleLines.length > maxLines) subtitleLines.shift(); }
-                        s.innerHTML = subtitleLines.map(line => line.text).join('<br>');
+                
+                if (d && d.settings) {
+                    if (d.settings.global) {
+                        c.className = 'layout-' + d.settings.global.layout;
+                        maxLines = (d.settings.global.layout === 'top' || d.settings.global.layout === 'bottom') ? 3 : 15;
+                        
+                        s.style.textAlign = d.settings.global.align || 'center';
+                        s.style.color = d.settings.global.color || '#ffffff';
+                        let h = (d.settings.global.bgColor || '#000000').replace('#', '');
+                        let r = parseInt(h.substring(0,2), 16), g = parseInt(h.substring(2,4), 16), b = parseInt(h.substring(4,6), 16);
+                        let op = d.settings.global.bgOpacity !== undefined ? d.settings.global.bgOpacity : 0.7;
+                        s.style.backgroundColor = `rgba(${r}, ${g}, ${b}, ${op})`;
+                    }
+                    
+                    let langSetting = d.settings[currentLang];
+                    if (langSetting) {
+                        if (langSetting.show === false) {
+                            c.style.display = 'none';
+                        } else {
+                            c.style.display = 'flex';
+                            s.style.fontSize = langSetting.fontSize + 'px';
+                            s.style.letterSpacing = langSetting.letterSpacing + 'px';
+                        }
                     }
                 }
-                if (d && d.style) {
-                    s.style.fontSize = d.style.fontSize; s.style.color = d.style.color; s.style.textAlign = d.style.align || 'center';
-                    let h = d.style.bgColor.replace('#', '');
-                    let r = parseInt(h.substring(0,2), 16), g = parseInt(h.substring(2,4), 16), b = parseInt(h.substring(4,6), 16);
-                    s.style.backgroundColor = `rgba(${r}, ${g}, ${b}, ${d.style.bgOpacity})`;
+                
+                if (d && d.subtitles && d.subtitles._timestamp !== lastTime) {
+                    lastTime = d.subtitles._timestamp;
+                    let n = d.subtitles[currentLang];
+                    
+                    if (n) {
+                        let text = typeof n === 'object' ? n.text : n;
+                        let msgId = typeof n === 'object' ? n.id : lastTime;
+                        let existingIndex = subtitleLines.findIndex(line => line.id === msgId);
+                        
+                        if (existingIndex !== -1) {
+                            subtitleLines[existingIndex].text = text;
+                        } else {
+                            subtitleLines.push({id: msgId, text: text});
+                            while (subtitleLines.length > maxLines) subtitleLines.shift();
+                        }
+                        s.innerHTML = subtitleLines.map(line => line.text).join('<br>');
+                    }
                 }
             });
         }
