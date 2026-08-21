@@ -9,55 +9,61 @@
             color: white;
             font-family: 'Malgun Gothic', sans-serif;
             margin: 0;
-            padding: 20px;
+            padding: 15px 20px;
+            height: 100vh; /* 화면 전체 높이 꽉 채우기 */
+            box-sizing: border-box;
+            overflow: hidden; /* 전체 화면 스크롤 방지 */
         }
         h1 {
             text-align: center;
             color: #4CAF50;
-            margin-top: 0;
-            margin-bottom: 25px;
-            font-size: 28px;
+            margin: 0 0 15px 0;
+            font-size: 26px;
         }
-        /* 💡 8개의 상자를 가로 4칸, 세로 2칸의 바둑판 모양으로 쪼갭니다 */
+        /* 💡 가로 4칸, 세로 2칸으로 화면을 정확히 분할하여 꽉 채웁니다 */
         .grid-container {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 20px;
+            grid-template-rows: repeat(2, 1fr);
+            gap: 15px;
+            height: calc(100vh - 65px); /* 제목 높이를 뺀 나머지 영역 전부 사용 */
         }
-        /* 화면이 좁아지면 가로 2칸으로 자동 조절됩니다 */
         @media (max-width: 1200px) {
-            .grid-container { grid-template-columns: repeat(2, 1fr); }
+            .grid-container { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(4, 1fr); }
         }
         
+        /* 💡 상자 밖으로 글자가 튀어나가는 것을 원천 차단합니다 */
         .lang-box {
             background: #1e1e1e;
             border: 2px solid #333;
             border-radius: 10px;
-            padding: 20px;
+            padding: 15px;
             display: flex;
             flex-direction: column;
             box-shadow: 0 4px 8px rgba(0,0,0,0.5);
+            overflow: hidden;
         }
         .lang-title {
-            font-size: 20px;
+            font-size: 18px;
             font-weight: bold;
             color: #ffeb3b;
             border-bottom: 1px solid #444;
-            padding-bottom: 10px;
-            margin-bottom: 15px;
+            padding-bottom: 8px;
+            margin-bottom: 10px;
             text-align: center;
         }
+        /* 💡 넘치는 글자는 위쪽에서 깔끔하게 잘려나갑니다 (overflow: hidden) */
         .lang-content {
             flex-grow: 1;
             font-size: 16px;
             line-height: 1.6;
-            height: 160px; /* 상자 높이 고정 */
             display: flex;
             flex-direction: column;
-            justify-content: flex-end; /* 실제 송출 화면처럼 아래서부터 쌓임 */
+            justify-content: flex-end; /* 아래서부터 쌓임 */
             word-break: keep-all;
             overflow-wrap: break-word;
             color: #e0e0e0;
+            overflow: hidden;
         }
         .lang-content p {
             margin: 0 0 8px 0;
@@ -67,7 +73,7 @@
         .lang-content p:last-child {
             border-bottom: none;
             margin-bottom: 0;
-            color: #00bcd4; /* 방금 들어온 가장 최신 문장은 색상을 다르게 강조 */
+            color: #00bcd4; /* 최신 문장 강조 */
             font-weight: bold;
         }
     </style>
@@ -77,13 +83,12 @@
     <h1>🖥️ 실시간 다국어 자막 모니터링 (멀티뷰)</h1>
     
     <div class="grid-container" id="monitorGrid">
-        <!-- 자바스크립트가 여기에 8개의 상자를 자동으로 만들어 냅니다 -->
+        <!-- 자바스크립트 생성 영역 -->
     </div>
 
     <script>
         const FIREBASE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/.json";
         
-        // 모니터링할 8개 국어 목록
         const languages = [
             { code: 'ko', name: '🇰🇷 한국어 (Korean)' },
             { code: 'en', name: '🇺🇸 영어 (English)' },
@@ -98,7 +103,6 @@
         const grid = document.getElementById('monitorGrid');
         let langData = {};
 
-        // 1. 화면이 켜지면 8개의 빈 상자를 먼저 그립니다.
         languages.forEach(lang => {
             langData[lang.code] = { lastTime: 0, lines: [] };
             grid.innerHTML += `
@@ -111,7 +115,6 @@
             `;
         });
 
-        // 2. 파이어베이스를 확인하여 새 글자를 꽂아 넣습니다.
         function updateMonitor() {
             fetch(FIREBASE_URL)
             .then(r => r.json())
@@ -132,27 +135,22 @@
                             let existingIndex = langData[code].lines.findIndex(line => line.id === msgId);
                             
                             if (existingIndex !== -1) {
-                                // 같은 아이디(문장)면 교정된 텍스트로 덮어쓰기
                                 langData[code].lines[existingIndex].text = text;
                             } else {
-                                // 새로운 문장이면 새로 추가
                                 langData[code].lines.push({ id: msgId, text: text });
-                                // 상황판 상자가 넘치지 않도록 4줄까지만 유지합니다.
                                 while (langData[code].lines.length > 4) {
                                     langData[code].lines.shift();
                                 }
                             }
                             
-                            // 해당 언어 상자에 글자 업데이트
                             document.getElementById(`box_${code}`).innerHTML =
                                 langData[code].lines.map(line => `<p>${line.text}</p>`).join('');
                         }
                     });
                 }
-            }).catch(e => { console.log("모니터링 통신 오류"); });
+            }).catch(e => {});
         }
 
-        // 0.3초마다 전체 상황을 감시합니다.
         setInterval(updateMonitor, 300);
     </script>
 </body>
