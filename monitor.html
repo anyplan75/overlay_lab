@@ -3,6 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <title>예배 자막 멀티뷰 모니터링</title>
+    
+    <!-- 💡 독립 데스크톱/모바일 앱 실행 메타 태그 -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
     <style>
         body {
             background: #121212;
@@ -13,26 +20,26 @@
             height: 100vh; /* 화면 전체 높이 꽉 채우기 */
             box-sizing: border-box;
             overflow: hidden; /* 전체 화면 스크롤 방지 */
+            user-select: none; /* 앱처럼 텍스트 드래그 방지 */
         }
         h1 {
             text-align: center;
             color: #4CAF50;
             margin: 0 0 15px 0;
-            font-size: 26px;
+            font-size: 24px;
         }
-        /* 💡 가로 4칸, 세로 2칸으로 화면을 정확히 분할하여 꽉 채웁니다 */
+        /* 💡 가로 4칸, 세로 2칸으로 화면을 분할하여 꽉 채움 */
         .grid-container {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
             grid-template-rows: repeat(2, 1fr);
             gap: 15px;
-            height: calc(100vh - 65px); /* 제목 높이를 뺀 나머지 영역 전부 사용 */
+            height: calc(100vh - 60px);
         }
         @media (max-width: 1200px) {
             .grid-container { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(4, 1fr); }
         }
         
-        /* 💡 상자 밖으로 글자가 튀어나가는 것을 원천 차단합니다 */
         .lang-box {
             background: #1e1e1e;
             border: 2px solid #333;
@@ -44,7 +51,7 @@
             overflow: hidden;
         }
         .lang-title {
-            font-size: 18px;
+            font-size: 17px;
             font-weight: bold;
             color: #ffeb3b;
             border-bottom: 1px solid #444;
@@ -52,14 +59,13 @@
             margin-bottom: 10px;
             text-align: center;
         }
-        /* 💡 넘치는 글자는 위쪽에서 깔끔하게 잘려나갑니다 (overflow: hidden) */
         .lang-content {
             flex-grow: 1;
-            font-size: 16px;
+            font-size: 15px;
             line-height: 1.6;
             display: flex;
             flex-direction: column;
-            justify-content: flex-end; /* 아래서부터 쌓임 */
+            justify-content: flex-end;
             word-break: keep-all;
             overflow-wrap: break-word;
             color: #e0e0e0;
@@ -73,7 +79,7 @@
         .lang-content p:last-child {
             border-bottom: none;
             margin-bottom: 0;
-            color: #00bcd4; /* 최신 문장 강조 */
+            color: #00bcd4;
             font-weight: bold;
         }
     </style>
@@ -82,9 +88,7 @@
 
     <h1>🖥️ 실시간 다국어 자막 모니터링 (멀티뷰)</h1>
     
-    <div class="grid-container" id="monitorGrid">
-        <!-- 자바스크립트 생성 영역 -->
-    </div>
+    <div class="grid-container" id="monitorGrid"></div>
 
     <script>
         const FIREBASE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/.json";
