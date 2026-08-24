@@ -2,17 +2,14 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <!-- 스마트폰 화면 크기에 딱 맞추는 필수 설정 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>모바일 실시간 통역 프롬프터</title>
     <style>
-        /* 스마트폰에서 눈이 편안한 다크 모드 스타일 */
         body {
             margin: 0; padding: 0;
             background-color: #1e1e1e; color: #f0f0f0;
             font-family: sans-serif;
         }
-        /* 화면 맨 위에 언어 선택 창을 고정 */
         #header {
             position: fixed; top: 0; left: 0; width: 100%;
             background-color: #333; padding: 15px 0;
@@ -23,13 +20,11 @@
             border-radius: 8px; border: none;
             background-color: #555; color: white; width: 80%;
         }
-        /* 글자가 차곡차곡 쌓이는 본문 영역 */
         #scriptBox {
             margin-top: 80px; padding: 20px;
             font-size: 22px; line-height: 1.6;
             padding-bottom: 50px;
         }
-        /* 한 문장이 끝날 때마다 약간의 여백을 줌 */
         p { margin-bottom: 15px; border-bottom: 1px dashed #444; padding-bottom: 15px; }
     </style>
 </head>
@@ -39,7 +34,7 @@
         <select id="langSelect" onchange="clearScreen()">
             <option value="ko">🇰🇷 한국어 (Korean)</option>
             <option value="en">🇺🇸 English (영어)</option>
-            <option value="zh-cn">🇨🇳 中文 (중국어)</option>
+            <option value="zh-CN">🇨🇳 中文 (중국어)</option> <!-- 💡 대소문자 매칭 오류 수정 -->
             <option value="vi">🇻🇳 Tiếng Việt (베트남어)</option>
             <option value="id">🇮🇩 Bahasa Indonesia (인도네시아어)</option>
             <option value="ne">🇳🇵 नेपाली (네팔어)</option>
@@ -55,7 +50,6 @@
     <script>
         let lastTime = 0;
 
-        // 언어를 바꾸면 기존에 쌓인 다른 언어 글자들을 싹 지워주는 기능
         function clearScreen() {
             document.getElementById('scriptBox').innerHTML = '<p id="waitingMsg">언어가 변경되었습니다. 다음 문장을 기다리는 중입니다...</p>';
         }
@@ -67,28 +61,26 @@
                 if(data && data.subtitles && data.subtitles._timestamp !== lastTime) {
                     lastTime = data.subtitles._timestamp;
                     
-                    // 현재 선택된 언어 확인
                     const selectedLang = document.getElementById('langSelect').value;
-                    let newText = data.subtitles[selectedLang];
+                    let newTextData = data.subtitles[selectedLang];
                     
-                    if (newText) {
-                        // 대기 메시지가 있다면 삭제
+                    if (newTextData) {
+                        // 💡 핵심 수정: 꾸러미(객체)로 들어오면 안의 text만 뽑아내고, 아니면 그냥 씁니다.
+                        let displayText = typeof newTextData === 'object' ? newTextData.text : newTextData;
+
                         const waitingMsg = document.getElementById('waitingMsg');
                         if (waitingMsg) waitingMsg.remove();
 
-                        // 새 문장을 맨 아래에 추가
                         const scriptBox = document.getElementById('scriptBox');
                         const newLine = document.createElement('p');
-                        newLine.innerText = newText;
+                        newLine.innerText = displayText; // 💡 object Object 대신 진짜 텍스트가 들어갑니다.
                         scriptBox.appendChild(newLine);
                         
-                        // 글자가 추가되면 스마트폰 화면을 맨 아래로 자동으로 끌어내림 (자동 스크롤)
                         window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
                     }
                 }
             });
         }
-        // 0.3초마다 파이어베이스 서버 확인
         setInterval(updatePrompter, 300);
     </script>
 </body>

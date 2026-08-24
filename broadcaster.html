@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (메모리 최적화 및 안전 저장 모드)</title>
+    <title>예배 자막 송출기 (네트워크 병목 해결)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -66,6 +66,9 @@
         let currentSentenceId = Date.now();
         let lastSpeechTime = Date.now();
         let silenceTimer = null;
+        
+        // 💡 추가된 변수: 파이어베이스 서버로 글자를 쏜 마지막 시간을 기억합니다.
+        let lastLivePushTime = 0;
 
         async function connectLocalFolder() {
             try {
@@ -97,7 +100,6 @@
                 lastSpeechTime = Date.now();
                 let interimText = "";
 
-                // 💡 변경점: 무한 누적 방지. 최종 확정된 텍스트와 임시 텍스트를 분리하여 가볍게 처리
                 for (let i = event.resultIndex; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
                         unprocessedFinalText += event.results[i][0].transcript;
@@ -107,18 +109,25 @@
                 }
 
                 let liveText = (unprocessedFinalText + interimText).trim();
+                
                 if (liveText) {
+                    // 내 PC 화면에는 즉시 즉시 글자를 띄워줍니다 (딜레이 없음)
                     document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
                     
-                    fetch(FIREBASE_URL, {
-                        method: "PATCH",
-                        body: JSON.stringify({
-                            _timestamp: Date.now(),
-                            ko: { text: liveText + "...", id: currentSentenceId }
-                        })
-                    }).catch(e => {});
-                    
-                    saveTextToFile('temp_live.txt', liveText);
+                    // 💡 핵심 해결책: 서버로 전송하는 건 0.4초(400ms)에 한 번씩만 모아서 쏩니다.
+                    if (Date.now() - lastLivePushTime > 400) {
+                        lastLivePushTime = Date.now();
+                        
+                        fetch(FIREBASE_URL, {
+                            method: "PATCH",
+                            body: JSON.stringify({
+                                _timestamp: Date.now(),
+                                ko: { text: liveText + "...", id: currentSentenceId }
+                            })
+                        }).catch(e => {});
+                        
+                        saveTextToFile('temp_live.txt', liveText);
+                    }
                 }
 
                 let regex = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|[요다까나])(\s|[.,?!]|$)/g;
@@ -139,7 +148,6 @@
                     let cutIndex = match.index + match[0].length;
                     let sentenceToProcess = unprocessedFinalText.substring(0, cutIndex).trim();
                     
-                    // 💡 변경점: 처리가 끝난 문장은 메모리에서 즉시 삭제
                     unprocessedFinalText = unprocessedFinalText.substring(cutIndex);
                     
                     let idToProcess = currentSentenceId;
@@ -166,7 +174,6 @@
             };
 
             recognition.onend = function() {
-                // 끊어지더라도 방송 중이면 즉시 다시 시작
                 if (isBroadcasting) { setTimeout(() => { try { recognition.start(); } catch(e) {} }, 10); }
             };
         }
@@ -293,15 +300,13 @@
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
                     
-                    // 💡 핵심 변경점: 2.5초 이상 침묵 시 엔진 강제 리프레시 (메모리 찌꺼기 제거)
                     if (silenceDuration > 2500 && silenceDuration < 3500) {
                         try { recognition.stop(); } catch(e) {}
                     }
 
-                    // 4.5초 이상 침묵 시 남은 텍스트 강제 전송
                     if (silenceDuration > 4500 && unprocessedFinalText.trim().length > 0) {
                         let sentenceToProcess = unprocessedFinalText.trim();
-                        unprocessedFinalText = ""; // 텍스트 초기화
+                        unprocessedFinalText = "";
                         
                         let idToProcess = currentSentenceId;
                         currentSentenceId = Date.now();
