@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기</title>
+    <title>예배 자막 송출기 (문장 겹침 완벽 해결본)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -73,9 +73,6 @@
         let lastSpeechTime = Date.now();
         let silenceTimer = null;
         let lastLivePushTime = 0;
-        
-        // 💡 핵심 추가: 완성본이 서버에 덮어씌워지는 것을 막는 타이머
-        let aiLockTime = 0;
 
         async function connectLocalFolder() {
             try {
@@ -95,8 +92,8 @@
             } catch (error) {}
         }
 
-        // 형님이 만족하셨던 원래의 훌륭한 문장 자르기 로직으로 완전 복구
         function findCutMatch(text) {
+            // 1순위: 확실한 문장 종결
             let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|거늘|시니|느냐|도다|입니까|입니다)(\s|[.,?!]|$)/g;
             let execResult;
             
@@ -104,21 +101,23 @@
                 if (execResult.index >= 10) return execResult;
             }
 
-            if (text.length >= 70) {
+            // 2순위: 60자가 넘어가는 만연체일 경우, 연결어미에서 자연스럽게 절단
+            if (text.length >= 60) {
                 let regexClause = /(고|며|는데|지만|면서|니까|어서|아서|으니|도록|하며|하고)(\s)/g;
                 let match = null;
                 while ((execResult = regexClause.exec(text)) !== null) {
-                    if (execResult.index >= 30) {
+                    if (execResult.index >= 20) {
                         match = execResult;
-                        if (execResult.index > 80) break;
+                        if (execResult.index > 70) break;
                     }
                 }
                 if (match) return match;
                 
-                if (text.length >= 100) {
-                    let lastSpace = text.lastIndexOf(" ", 90);
+                // 최후의 보루: 90자가 넘어가는데도 어미가 없으면 어쩔 수 없이 띄어쓰기 절단
+                if (text.length >= 90) {
+                    let lastSpace = text.lastIndexOf(" ", 85);
                     if (lastSpace > 20) return { index: lastSpace, 0: " " };
-                    return { index: 100, 0: "" };
+                    return { index: 90, 0: "" };
                 }
             }
             
@@ -150,28 +149,8 @@
                 }
 
                 let unprocessedText = totalText.substring(totalProcessedLength);
-                let liveText = unprocessedText.trim();
-                
-                if (liveText) {
-                    let displayLiveText = liveText.length > 70 ? "..." + liveText.substring(liveText.length - 70) : liveText;
-                    document.getElementById('realtimeText').innerText = `듣는 중: ${displayLiveText}`;
-                    
-                    // 💡 보호막 로직: 지금 시간이 aiLockTime보다 커야만(즉, 0.8초가 지나야만) 라이브 텍스트를 서버에 씁니다.
-                    if (Date.now() > aiLockTime && (Date.now() - lastLivePushTime > 200)) {
-                        lastLivePushTime = Date.now();
-                        fetch(FIREBASE_URL, {
-                            method: "PATCH",
-                            body: JSON.stringify({
-                                _timestamp: Date.now(),
-                                ko: { text: liveText, id: currentSentenceId }
-                            })
-                        }).catch(e => {});
-                        saveTextToFile('temp_live.txt', liveText);
-                    }
-                } else {
-                    document.getElementById('realtimeText').innerText = `듣는 중: ...`;
-                }
 
+                // 💡 1. 자르기를 "무조건 먼저" 실행합니다. (스필오버 겹침 완벽 차단)
                 let match = findCutMatch(unprocessedText);
                 
                 while (match) {
@@ -190,6 +169,28 @@
                     }
                     
                     match = findCutMatch(unprocessedText);
+                }
+
+                // 💡 2. 깔끔하게 자르고 남은 순수한 글자만 실시간 화면에 쏩니다.
+                let liveText = unprocessedText.trim();
+                
+                if (liveText) {
+                    let displayLiveText = liveText.length > 70 ? "..." + liveText.substring(liveText.length - 70) : liveText;
+                    document.getElementById('realtimeText').innerText = `듣는 중: ${displayLiveText}`;
+                    
+                    if (Date.now() - lastLivePushTime > 200) {
+                        lastLivePushTime = Date.now();
+                        fetch(FIREBASE_URL, {
+                            method: "PATCH",
+                            body: JSON.stringify({
+                                _timestamp: Date.now(),
+                                ko: { text: liveText, id: currentSentenceId }
+                            })
+                        }).catch(e => {});
+                        saveTextToFile('temp_live.txt', liveText);
+                    }
+                } else {
+                    document.getElementById('realtimeText').innerText = `듣는 중: ...`;
                 }
 
                 globalUnprocessedText = unprocessedText;
@@ -302,10 +303,7 @@
                     }
                 });
 
-                // 💡 해결책 핵심: 교정본을 서버에 올리는 통신이 완료되면, 0.8초 동안 라이브 전송을 멈춰 모니터들이 안전하게 글자를 가져가도록 지켜줍니다.
-                fetch(FIREBASE_URL, { method: "PATCH", body: JSON.stringify(translationPayload) }).then(() => {
-                    aiLockTime = Date.now() + 800;
-                }).catch(e => {});
+                fetch(FIREBASE_URL, { method: "PATCH", body: JSON.stringify(translationPayload) }).catch(e => {});
 
             } catch (error) {}
         }
@@ -325,7 +323,7 @@
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
                     
-                    if (silenceDuration > 3500 && globalUnprocessedText.trim().length > 0) {
+                    if (silenceDuration > 2500 && globalUnprocessedText.trim().length > 0) {
                         let sentenceToProcess = globalUnprocessedText.trim();
                         totalProcessedLength += globalUnprocessedText.length;
                         globalUnprocessedText = "";
@@ -339,7 +337,7 @@
                         document.getElementById('realtimeText').innerText = `듣는 중: ...`;
                     }
                 }
-            }, 1000);
+            }, 500);
         }
         
         async function stopBroadcast() {
