@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (50자 절대 방어 즉시 분할)</title>
+    <title>예배 자막 송출기 (6자~40자 황금비율 분할)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -91,23 +91,26 @@
             } catch (error) {}
         }
 
-        // 💡 50자 절대 방어선 적용: 무조건 바로바로 자릅니다
+        // 💡 형님이 지정해주신 6~40자 황금비율 로직
         function findCutMatch(text) {
-            // 1. 예배/성경 어투 완벽 대응 (나이다, 거늘, 시니, 도다 등 추가)
-            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|거늘|시니|느냐|도다)(\s|[.,?!]|$)/g;
+            // 1. 6글자 이상 ~ 40글자 이내에서 끝맺음말 확인
+            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|거늘|시니|느냐|도다|었다|았다|했다|인다|이다)(\s|[.,?!]|$)/g;
             let execResult;
-            
+
             while ((execResult = regexEnd.exec(text)) !== null) {
-                if (execResult.index >= 10) return execResult; // 10자 이상이면 바로 컷
+                // 6글자 이상이고, 40글자 이하일 때만 끝맺음말에서 자름
+                if (execResult.index >= 6 && execResult.index <= 40) {
+                    return execResult;
+                }
             }
 
-            // 2. 50자 절대 방어선: 종결어미가 없어도 50자가 넘어가면 무조건 띄어쓰기에서 강제 컷! 절대 안 모읍니다.
-            if (text.length >= 50) {
-                let lastSpace = text.lastIndexOf(" ", 50);
-                if (lastSpace > 15) return { index: lastSpace, 0: " " };
-                return { index: 50, 0: "" }; // 띄어쓰기조차 없으면 50자에서 무식하게 절단
+            // 2. 40글자가 넘어가면 끝맺음말 무시하고 무조건 40자 위치의 띄어쓰기에서 자름
+            if (text.length > 40) {
+                let lastSpace = text.lastIndexOf(" ", 40);
+                if (lastSpace > 10) return { index: lastSpace, 0: " " }; // 너무 앞이 아니면 띄어쓰기에서 컷
+                return { index: 40, 0: "" }; // 띄어쓰기조차 없으면 강제 40자 컷
             }
-            
+
             return null;
         }
 
@@ -307,7 +310,6 @@
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
                     
-                    // 💡 침묵 대기 시간도 다시 1.5초로 줄여서, 말을 멈추면 잔여 글자도 즉시 보냅니다.
                     if (silenceDuration > 1500 && unprocessedFinalText.trim().length > 0) {
                         let sentenceToProcess = unprocessedFinalText.trim();
                         unprocessedFinalText = "";
