@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (황금비율 문장 분할)</title>
+    <title>예배 자막 송출기 (50자 절대 방어 즉시 분할)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -91,33 +91,21 @@
             } catch (error) {}
         }
 
+        // 💡 50자 절대 방어선 적용: 무조건 바로바로 자릅니다
         function findCutMatch(text) {
-            // 1. 확실한 문장 끝 (최소 15자 이상이어야만 절단)
-            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|었다|았다|했다|인다|이다)(\s|[.,?!]|$)/g;
+            // 1. 예배/성경 어투 완벽 대응 (나이다, 거늘, 시니, 도다 등 추가)
+            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|거늘|시니|느냐|도다)(\s|[.,?!]|$)/g;
             let execResult;
             
             while ((execResult = regexEnd.exec(text)) !== null) {
-                if (execResult.index >= 15) return execResult;
+                if (execResult.index >= 10) return execResult; // 10자 이상이면 바로 컷
             }
 
-            // 2. 문장이 길어질 때 (60자가 넘어갈 때만) 연결어미에서 부드럽게 절단
-            if (text.length > 60) {
-                let regexClause = /(고|며|는데|지만|면서|니까|어서|아서|으니|도록|하며|하고)(\s)/g;
-                let match = null;
-                while ((execResult = regexClause.exec(text)) !== null) {
-                    if (execResult.index >= 30) {
-                        match = execResult;
-                        if (execResult.index > 75) break;
-                    }
-                }
-                if (match) return match;
-                
-                // 3. 85자가 넘어가도록 연결어미조차 없으면 가장 가까운 띄어쓰기에서 최후의 절단
-                if (text.length > 85) {
-                    let lastSpace = text.lastIndexOf(" ", 80);
-                    if (lastSpace > 30) return { index: lastSpace, 0: " " };
-                    return { index: 80, 0: "" };
-                }
+            // 2. 50자 절대 방어선: 종결어미가 없어도 50자가 넘어가면 무조건 띄어쓰기에서 강제 컷! 절대 안 모읍니다.
+            if (text.length >= 50) {
+                let lastSpace = text.lastIndexOf(" ", 50);
+                if (lastSpace > 15) return { index: lastSpace, 0: " " };
+                return { index: 50, 0: "" }; // 띄어쓰기조차 없으면 50자에서 무식하게 절단
             }
             
             return null;
@@ -160,7 +148,6 @@
                     if (Date.now() - lastLivePushTime > 200) {
                         lastLivePushTime = Date.now();
                         
-                        // 💡 실시간 송출 시 꼬리표로 붙던 "..." 기호 삭제 완료
                         fetch(FIREBASE_URL, {
                             method: "PATCH",
                             body: JSON.stringify({
@@ -320,8 +307,8 @@
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
                     
-                    // 💡 잠깐 쉬실 때 바로 낚아채지 않도록 침묵 허용 시간을 2.5초로 늘림
-                    if (silenceDuration > 2500 && unprocessedFinalText.trim().length > 0) {
+                    // 💡 침묵 대기 시간도 다시 1.5초로 줄여서, 말을 멈추면 잔여 글자도 즉시 보냅니다.
+                    if (silenceDuration > 1500 && unprocessedFinalText.trim().length > 0) {
                         let sentenceToProcess = unprocessedFinalText.trim();
                         unprocessedFinalText = "";
                         
@@ -332,7 +319,7 @@
                         processOpenAITranslation(sentenceToProcess, idToProcess);
                     }
                 }
-            }, 1000);
+            }, 500);
         }
         
         async function stopBroadcast() {
