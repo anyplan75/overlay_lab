@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (번역 원고 누적 저장본)</title>
+    <title>예배 자막 송출기 (AI 오지랖 방지 및 속도 복구)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -79,33 +79,15 @@
                 folderHandle = await window.showDirectoryPicker();
                 document.getElementById('folderBtn').style.display = 'none';
                 document.getElementById('startBtn').style.display = 'inline-block';
-                alert("✅ 저장 폴더가 연결되었습니다! 이제 파일이 누적되어 저장됩니다.");
             } catch (error) {}
         }
 
-        // 💡 1. 덮어쓰기용 (실시간 글자가 계속 변해야 하는 temp_live.txt 전용)
-        async function overwriteTextToFile(filename, content) {
+        async function saveTextToFile(filename, content) {
             if (!folderHandle) return;
             try {
                 const fileHandle = await folderHandle.getFileHandle(filename, { create: true });
                 const writable = await fileHandle.createWritable();
                 await writable.write(content);
-                await writable.close();
-            } catch (error) {}
-        }
-
-        // 💡 2. 이어쓰기용 (교정본, 번역본 등 내용이 계속 쌓여야 하는 파일 전용)
-        async function appendTextToFile(filename, content) {
-            if (!folderHandle) return;
-            try {
-                const fileHandle = await folderHandle.getFileHandle(filename, { create: true });
-                const file = await fileHandle.getFile();
-                // 기존 데이터 유지 모드로 열기
-                const writable = await fileHandle.createWritable({ keepExistingData: true });
-                // 파일의 가장 끝(마지막 위치)으로 커서를 이동
-                await writable.seek(file.size);
-                // 엔터 2번(\n\n)을 쳐서 문단 구분을 예쁘게 해준 뒤 저장
-                await writable.write(content + "\n\n");
                 await writable.close();
             } catch (error) {}
         }
@@ -208,8 +190,7 @@
                                 ko: { text: liveText, id: currentSentenceId }
                             })
                         }).catch(e => {});
-                        // 💡 실시간 임시 텍스트는 계속 덮어쓰기 합니다.
-                        overwriteTextToFile('temp_live.txt', liveText);
+                        saveTextToFile('temp_live.txt', liveText);
                     }
                 } else {
                     document.getElementById('realtimeText').innerText = `듣는 중: ...`;
@@ -274,6 +255,7 @@
 2) 나머지 7개 언어로 자연스럽고 영적인 울림이 있도록 번역해.
 3) [원문 사수] 원문에 있는 단어를 임의로 빼거나 삭제하지 말고 모두 포함해.
 4) [요약 및 중략 절대 금지] 내용을 임의로 요약하거나 생략하지 마.
+5) [미완성 어미 보존] 원문이 '~고', '~는데', '~서', '~며' 등의 연결어미나 미완성 상태로 끝났다면, 억지로 '~습니다', '~합니다'로 문장을 닫지 말고 원문 그대로 살려둬.
 
 반드시 아래 JSON 형식으로만 응답해:
 {
@@ -320,8 +302,7 @@
                 let translationPayload = { _timestamp: Date.now() };
                 ['ko', 'en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'].forEach(lang => {
                     if (result[lang]) {
-                        // 💡 교정본 및 다국어 번역본은 파일 맨 밑으로 계속 '이어쓰기' 합니다.
-                        appendTextToFile(`${lang}.txt`, result[lang]);
+                        saveTextToFile(`${lang}.txt`, result[lang]);
                         translationPayload[lang] = { text: result[lang], id: msgId };
                     }
                 });
@@ -346,7 +327,8 @@
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
                     
-                    if (silenceDuration > 2500 && globalUnprocessedText.trim().length > 0) {
+                    // 💡 다시 속도를 빠릿빠릿하게 2초(2000ms)로 복구했습니다.
+                    if (silenceDuration > 2000 && globalUnprocessedText.trim().length > 0) {
                         let sentenceToProcess = globalUnprocessedText.trim();
                         
                         fetch(FIREBASE_URL, {
