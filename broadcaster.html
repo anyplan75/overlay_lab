@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (실시간 즉각 절단 엔진)</title>
+    <title>예배 자막 송출기 (문장 단위 정밀 분할 및 요약 방지)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -62,11 +62,7 @@
         let isBroadcasting = false;
         let folderHandle = null;
         
-        // 💡 핵심 변수: 들은 전체 내용(totalText)과 번역기로 보낸 양(processedLength)을 추적합니다.
-        let globalFinalText = "";
-        let processedLength = 0;
-        let unprocessedText = "";
-
+        let unprocessedFinalText = "";
         let currentSentenceId = Date.now();
         let lastSpeechTime = Date.now();
         let silenceTimer = null;
@@ -90,32 +86,38 @@
             } catch (error) {}
         }
 
+        // 💡 핵심 로직: 무식하게 자르지 않고 문법과 길이를 고려해 스마트하게 자르는 함수
         function findCutMatch(text) {
-            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|[요다까죠네])(\s|[.,?!]|$)/g;
-            let regexClause = /(고|며|는데|지만|면서|니까|어서|으니|도록|하며|하고)(\s)/g;
-            
+            // 1순위: 확실한 문장 끝맺음말 (가장 안전한 종결어미들만 엄선)
+            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|었다|았다|했다|인다|이다)(\s|[.,?!]|$)/g;
             let execResult;
+            
             while ((execResult = regexEnd.exec(text)) !== null) {
-                if (execResult.index >= 10) return execResult;
+                // 문장이 15자는 넘어야 끝맺음으로 인정 (단어 중간이 잘리는 오류 방지)
+                if (execResult.index >= 15) return execResult;
             }
             
-            if (text.length > 50) {
+            // 2순위: 끝맺음말 없이 문장이 길어질 때 (80자 초과 시 가독성 및 AI 중략 방지)
+            if (text.length > 80) {
+                // 의미가 이어지는 연결어미에서 안전하게 절단
+                let regexClause = /(고|며|는데|지만|면서|니까|어서|아서|으니|도록|하며|하고)(\s)/g;
                 let match = null;
                 while ((execResult = regexClause.exec(text)) !== null) {
-                    if (execResult.index >= 20) {
+                    if (execResult.index >= 40) {
                         match = execResult;
-                        if (execResult.index > 70) break;
+                        if (execResult.index > 100) break; // 100자를 넘어가면 그 앞의 어미를 최우선 채택
                     }
                 }
                 if (match) return match;
+                
+                // 3순위: 연결어미도 없이 120자가 넘어가면 그제서야 가장 안전한 뒤쪽 띄어쓰기에서 절단
+                if (text.length > 120) {
+                    let lastSpace = text.lastIndexOf(" ", 115);
+                    if (lastSpace > 50) return { index: lastSpace, 0: " " };
+                }
             }
             
-            if (text.length > 80) {
-                let lastSpace = text.lastIndexOf(" ", 80);
-                if (lastSpace > 20) return { index: lastSpace, 0: " " };
-                return { index: 80, 0: "" };
-            }
-            return null;
+            return null; // 아직 자를 조건이 안 되면 계속 누적하며 기다림
         }
 
         if (!('webkitSpeechRecognition' in window)) {
@@ -134,34 +136,27 @@
 
             recognition.onresult = function(event) {
                 lastSpeechTime = Date.now();
-                let currentInterim = "";
+                let interimText = "";
 
                 document.getElementById('realtimeText').style.color = "#ffeb3b";
 
-                // 💡 확정된 문장(Final)과 아직 듣는 중인 문장(Interim)을 합칩니다.
                 for (let i = event.resultIndex; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
-                        globalFinalText += event.results[i][0].transcript;
+                        unprocessedFinalText += event.results[i][0].transcript;
                     } else {
-                        currentInterim += event.results[i][0].transcript;
+                        interimText += event.results[i][0].transcript;
                     }
                 }
 
-                let totalText = globalFinalText + currentInterim;
-
-                // 오류 방지: 구글 STT가 갑자기 글자를 줄였을 때 꼬이지 않도록 보호
-                if (processedLength > totalText.length) {
-                    processedLength = totalText.length;
-                }
-
-                unprocessedText = totalText.substring(processedLength);
-                let liveText = unprocessedText.trim();
+                let liveText = (unprocessedFinalText + interimText).trim();
                 
                 if (liveText) {
                     document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
                     
                     if (Date.now() - lastLivePushTime > 200) {
                         lastLivePushTime = Date.now();
+                        
+                        // 실시간 수신기에 쏘는 임시 텍스트 (여기서만 ... 을 표기해 실시간임을 알림)
                         fetch(FIREBASE_URL, {
                             method: "PATCH",
                             body: JSON.stringify({
@@ -169,19 +164,19 @@
                                 ko: { text: liveText + "...", id: currentSentenceId }
                             })
                         }).catch(e => {});
+                        
                         saveTextToFile('temp_live.txt', liveText);
                     }
                 }
 
-                // 💡 핵심: 숨을 쉬기 전이라도 듣는 중에 끝맺음말이 나오면 즉시 잘라서 날립니다!
-                let match = findCutMatch(unprocessedText);
+                // 스마트 분할 함수 호출
+                let match = findCutMatch(unprocessedFinalText);
                 
                 while (match) {
                     let cutIndex = match.index + match[0].length;
-                    let sentenceToProcess = unprocessedText.substring(0, cutIndex).trim();
+                    let sentenceToProcess = unprocessedFinalText.substring(0, cutIndex).trim();
                     
-                    processedLength += cutIndex;
-                    unprocessedText = totalText.substring(processedLength);
+                    unprocessedFinalText = unprocessedFinalText.substring(cutIndex);
                     
                     let idToProcess = currentSentenceId;
                     currentSentenceId = Date.now();
@@ -191,7 +186,7 @@
                         processOpenAITranslation(sentenceToProcess, idToProcess);
                     }
                     
-                    match = findCutMatch(unprocessedText);
+                    match = findCutMatch(unprocessedFinalText);
                 }
             };
 
@@ -244,12 +239,14 @@
                 return;
             }
 
+            // 💡 생략 및 임의 창작(...)을 원천 차단하는 가장 강력한 프롬프트
             const prompt = `
 너는 기독교 예배 설교를 전담하는 최고 수준의 동시통역사야.
 다음 목사님의 설교 발화를 읽고:
 1) 한국어 오탈자와 띄어쓰기를 문맥에 맞게 다듬어 교정해. 이때 설교에 어울리는 은혜로운 어휘와 존댓말, 신학적 뉘앙스를 철저히 살려야 해.
 2) 나머지 7개 언어로 자연스럽고 영적인 울림이 있도록 번역해. 기독교 전문 용어(예: 보혈, 성령, 구원 등)를 정확한 각국 기독교 용어로 매칭해.
-3) [가장 중요] 길이가 길거나 복잡하더라도 원문의 내용을 절대 요약하거나 생략(중략)하지 말고, 100% 빠짐없이 1:1로 모든 문장을 번역 및 교정해.
+3) [가장 중요] 내용이 길거나 복잡하더라도 절대 임의로 요약하거나 생략(중략)하지 말고, 100% 빠짐없이 1:1로 번역해.
+4) [형식 엄수] 문장이 중간에 잘린 채로 끝나더라도 끝에 말줄임표(...)를 임의로 지어내어 붙이지 마. 입력된 텍스트 그대로만 번역해.
 
 반드시 아래 JSON 형식으로만 응답해:
 {
@@ -277,7 +274,7 @@
                         model: "gpt-4o",
                         messages: [{ role: "user", content: prompt }],
                         response_format: { type: "json_object" },
-                        temperature: 0.2
+                        temperature: 0.1 // 💡 창작을 막고 기계처럼 번역하게 온도를 극단적으로 낮춤
                     })
                 });
 
@@ -314,11 +311,7 @@
                 return;
             }
             
-            isBroadcasting = true;
-            globalFinalText = "";
-            processedLength = 0;
-            unprocessedText = "";
-            currentSentenceId = Date.now();
+            isBroadcasting = true; unprocessedFinalText = ""; currentSentenceId = Date.now();
             
             const rt = document.getElementById('realtimeText');
             rt.innerText = "⏳ 마이크 서버에 연결 중입니다...";
@@ -331,12 +324,10 @@
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
-                    
-                    // 말이 끊기고 3.5초가 지나면 남아있는 찌꺼기 글자도 싹 모아서 번역기로 보냅니다.
-                    if (silenceDuration > 3500 && unprocessedText.trim().length > 0) {
-                        let sentenceToProcess = unprocessedText.trim();
-                        processedLength += unprocessedText.length;
-                        unprocessedText = "";
+
+                    if (silenceDuration > 3500 && unprocessedFinalText.trim().length > 0) {
+                        let sentenceToProcess = unprocessedFinalText.trim();
+                        unprocessedFinalText = "";
                         
                         let idToProcess = currentSentenceId;
                         currentSentenceId = Date.now();
