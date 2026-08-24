@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (글자 증발 완벽 해결본)</title>
+    <title>예배 자막 송출기 (번역 원고 누적 저장본)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -79,15 +79,33 @@
                 folderHandle = await window.showDirectoryPicker();
                 document.getElementById('folderBtn').style.display = 'none';
                 document.getElementById('startBtn').style.display = 'inline-block';
+                alert("✅ 저장 폴더가 연결되었습니다! 이제 파일이 누적되어 저장됩니다.");
             } catch (error) {}
         }
 
-        async function saveTextToFile(filename, content) {
+        // 💡 1. 덮어쓰기용 (실시간 글자가 계속 변해야 하는 temp_live.txt 전용)
+        async function overwriteTextToFile(filename, content) {
             if (!folderHandle) return;
             try {
                 const fileHandle = await folderHandle.getFileHandle(filename, { create: true });
                 const writable = await fileHandle.createWritable();
                 await writable.write(content);
+                await writable.close();
+            } catch (error) {}
+        }
+
+        // 💡 2. 이어쓰기용 (교정본, 번역본 등 내용이 계속 쌓여야 하는 파일 전용)
+        async function appendTextToFile(filename, content) {
+            if (!folderHandle) return;
+            try {
+                const fileHandle = await folderHandle.getFileHandle(filename, { create: true });
+                const file = await fileHandle.getFile();
+                // 기존 데이터 유지 모드로 열기
+                const writable = await fileHandle.createWritable({ keepExistingData: true });
+                // 파일의 가장 끝(마지막 위치)으로 커서를 이동
+                await writable.seek(file.size);
+                // 엔터 2번(\n\n)을 쳐서 문단 구분을 예쁘게 해준 뒤 저장
+                await writable.write(content + "\n\n");
                 await writable.close();
             } catch (error) {}
         }
@@ -153,8 +171,6 @@
                     let cutIndex = match.index + match[0].length;
                     let sentenceToProcess = unprocessedText.substring(0, cutIndex).trim();
                     
-                    // 💡 핵심 해결책: 문장을 자르는 순간, 0.2초 타이머를 무시하고
-                    // 완성된 원문("있지 않겠어요")을 화면에 강제로 즉시 쏴버립니다. (삼킴 현상 방지)
                     fetch(FIREBASE_URL, {
                         method: "PATCH",
                         body: JSON.stringify({
@@ -192,7 +208,8 @@
                                 ko: { text: liveText, id: currentSentenceId }
                             })
                         }).catch(e => {});
-                        saveTextToFile('temp_live.txt', liveText);
+                        // 💡 실시간 임시 텍스트는 계속 덮어쓰기 합니다.
+                        overwriteTextToFile('temp_live.txt', liveText);
                     }
                 } else {
                     document.getElementById('realtimeText').innerText = `듣는 중: ...`;
@@ -303,7 +320,8 @@
                 let translationPayload = { _timestamp: Date.now() };
                 ['ko', 'en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'].forEach(lang => {
                     if (result[lang]) {
-                        saveTextToFile(`${lang}.txt`, result[lang]);
+                        // 💡 교정본 및 다국어 번역본은 파일 맨 밑으로 계속 '이어쓰기' 합니다.
+                        appendTextToFile(`${lang}.txt`, result[lang]);
                         translationPayload[lang] = { text: result[lang], id: msgId };
                     }
                 });
@@ -331,7 +349,6 @@
                     if (silenceDuration > 2500 && globalUnprocessedText.trim().length > 0) {
                         let sentenceToProcess = globalUnprocessedText.trim();
                         
-                        // 남은 찌꺼기를 처리할 때도 화면에 강제로 확실히 쏴줍니다.
                         fetch(FIREBASE_URL, {
                             method: "PATCH",
                             body: JSON.stringify({
