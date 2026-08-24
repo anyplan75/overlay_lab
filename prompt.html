@@ -34,7 +34,7 @@
         <select id="langSelect" onchange="clearScreen()">
             <option value="ko">🇰🇷 한국어 (Korean)</option>
             <option value="en">🇺🇸 English (영어)</option>
-            <option value="zh-CN">🇨🇳 中文 (중국어)</option> <!-- 💡 대소문자 매칭 오류 수정 -->
+            <option value="zh-CN">🇨🇳 中文 (중국어)</option>
             <option value="vi">🇻🇳 Tiếng Việt (베트남어)</option>
             <option value="id">🇮🇩 Bahasa Indonesia (인도네시아어)</option>
             <option value="ne">🇳🇵 नेपाली (네팔어)</option>
@@ -49,8 +49,10 @@
 
     <script>
         let lastTime = 0;
+        let prompterLines = []; // 💡 글자들을 ID와 함께 기억해둘 배열
 
         function clearScreen() {
+            prompterLines = [];
             document.getElementById('scriptBox').innerHTML = '<p id="waitingMsg">언어가 변경되었습니다. 다음 문장을 기다리는 중입니다...</p>';
         }
 
@@ -65,17 +67,27 @@
                     let newTextData = data.subtitles[selectedLang];
                     
                     if (newTextData) {
-                        // 💡 핵심 수정: 꾸러미(객체)로 들어오면 안의 text만 뽑아내고, 아니면 그냥 씁니다.
-                        let displayText = typeof newTextData === 'object' ? newTextData.text : newTextData;
+                        let text = typeof newTextData === 'object' ? newTextData.text : newTextData;
+                        let msgId = typeof newTextData === 'object' ? newTextData.id : lastTime;
 
-                        const waitingMsg = document.getElementById('waitingMsg');
-                        if (waitingMsg) waitingMsg.remove();
-
-                        const scriptBox = document.getElementById('scriptBox');
-                        const newLine = document.createElement('p');
-                        newLine.innerText = displayText; // 💡 object Object 대신 진짜 텍스트가 들어갑니다.
-                        scriptBox.appendChild(newLine);
+                        // 💡 핵심 덮어쓰기 로직: 지금 들어온 문장 ID가 이미 화면에 있는 ID인지 검사
+                        let existingIndex = prompterLines.findIndex(line => line.id === msgId);
                         
+                        if (existingIndex !== -1) {
+                            // 기존 문장이면 밑으로 추가하지 않고 해당 위치의 글자만 교체
+                            prompterLines[existingIndex].text = text;
+                        } else {
+                            // 완전히 새로운 문장이면 배열 맨 아래에 추가
+                            prompterLines.push({id: msgId, text: text});
+                            // 스마트폰 메모리가 뻗지 않도록 최근 50문장만 남기고 이전 내용은 삭제
+                            if (prompterLines.length > 50) prompterLines.shift();
+                        }
+
+                        // 화면에 깔끔하게 다시 그리기
+                        const scriptBox = document.getElementById('scriptBox');
+                        scriptBox.innerHTML = prompterLines.map(line => `<p>${line.text}</p>`).join('');
+                        
+                        // 항상 맨 아래로 자동 스크롤
                         window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
                     }
                 }
