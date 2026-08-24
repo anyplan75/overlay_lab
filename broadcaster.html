@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (초단위 즉시 분할)</title>
+    <title>예배 자막 송출기 (원래 버전 복구)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -62,11 +62,12 @@
         let isBroadcasting = false;
         let folderHandle = null;
         
-        let unprocessedFinalText = "";
+        let globalFinalText = "";
+        let processedLength = 0;
+        let unprocessedText = "";
         let currentSentenceId = Date.now();
         let lastSpeechTime = Date.now();
         let silenceTimer = null;
-        let lastLivePushTime = 0;
 
         async function connectLocalFolder() {
             try {
@@ -86,34 +87,6 @@
             } catch (error) {}
         }
 
-        // 💡 핵심 튜닝: 무조건 짧게, 조금만 숨을 쉬거나 쉼표/어미가 보이면 곧바로 짤라서 보냄 (최대 30~40자 제한)
-        function findCutMatch(text) {
-            let trimmed = text.trim();
-            // 글자 수가 25자를 넘어가면 조금만 자연스러운 끊김(띄어쓰기, 쉼표, 어미)이 있어도 무조건 잘라냄
-            if (trimmed.length > 25) {
-                // 구두점이나 조사, 연결어미 근처의 공백을 찾아 즉시 커팅
-                let lastSpace = trimmed.lastIndexOf(" ", 35);
-                if (lastSpace > 10) {
-                    return { index: lastSpace, 0: " " };
-                }
-            }
-
-            // 확실한 종결/쉼표 어미가 나오면 즉시 절단
-            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|요|죠|다|까|네|며|고|데|지만)(\s|[.,?!]|$)/g;
-            let execResult;
-            
-            while ((execResult = regexEnd.exec(text)) !== null) {
-                if (execResult.index >= 8) return execResult;
-            }
-
-            // 만약 글자가 40자를 넘어가면 사정없이 강제 절단
-            if (text.length > 40) {
-                return { index: 40, 0: "" };
-            }
-            
-            return null;
-        }
-
         if (!('webkitSpeechRecognition' in window)) {
             alert("구글 크롬을 사용해 주십시오.");
         } else {
@@ -124,51 +97,62 @@
 
             recognition.onstart = function() {
                 const rt = document.getElementById('realtimeText');
-                rt.innerText = "🟢 마이크 준비 완료! (말씀을 시작해 주세요)";
+                rt.innerText = "🟢 마이크 준비 완료!";
                 rt.style.color = "#4CAF50";
             };
 
             recognition.onresult = function(event) {
                 lastSpeechTime = Date.now();
-                let interimText = "";
+                let currentInterim = "";
 
                 document.getElementById('realtimeText').style.color = "#ffeb3b";
 
                 for (let i = event.resultIndex; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
-                        unprocessedFinalText += event.results[i][0].transcript;
+                        globalFinalText += event.results[i][0].transcript;
                     } else {
-                        interimText += event.results[i][0].transcript;
+                        currentInterim += event.results[i][0].transcript;
                     }
                 }
 
-                let liveText = (unprocessedFinalText + interimText).trim();
-                
+                let totalText = globalFinalText + currentInterim;
+                unprocessedText = totalText.substring(processedLength);
+
+                let liveText = unprocessedText.trim();
                 if (liveText) {
                     document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
                     
-                    if (Date.now() - lastLivePushTime > 150) {
-                        lastLivePushTime = Date.now();
-                        
-                        fetch(FIREBASE_URL, {
-                            method: "PATCH",
-                            body: JSON.stringify({
-                                _timestamp: Date.now(),
-                                ko: { text: liveText + "...", id: currentSentenceId }
-                            })
-                        }).catch(e => {});
-                        
-                        saveTextToFile('temp_live.txt', liveText);
-                    }
+                    fetch(FIREBASE_URL, {
+                        method: "PATCH",
+                        body: JSON.stringify({
+                            _timestamp: Date.now(),
+                            ko: { text: liveText + "...", id: currentSentenceId }
+                        })
+                    }).catch(e => {});
+                    
+                    saveTextToFile('temp_live.txt', liveText);
                 }
 
-                let match = findCutMatch(unprocessedFinalText);
+                let regex = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|[요다까나])(\s|[.,?!]|$)/g;
+                let match = null;
+                let execResult;
+                
+                while ((execResult = regex.exec(unprocessedText)) !== null) {
+                    if (execResult.index >= 15) { match = execResult; break; }
+                }
+
+                if (!match && unprocessedText.length > 80) {
+                    let lastSpace = unprocessedText.lastIndexOf(" ", 80);
+                    if (lastSpace > 20) match = { index: lastSpace, 0: " " };
+                    else match = { index: 80, 0: "" };
+                }
                 
                 while (match) {
                     let cutIndex = match.index + match[0].length;
-                    let sentenceToProcess = unprocessedFinalText.substring(0, cutIndex).trim();
+                    let sentenceToProcess = unprocessedText.substring(0, cutIndex).trim();
                     
-                    unprocessedFinalText = unprocessedFinalText.substring(cutIndex);
+                    processedLength += cutIndex;
+                    unprocessedText = totalText.substring(processedLength);
                     
                     let idToProcess = currentSentenceId;
                     currentSentenceId = Date.now();
@@ -178,7 +162,18 @@
                         processOpenAITranslation(sentenceToProcess, idToProcess);
                     }
                     
-                    match = findCutMatch(unprocessedFinalText);
+                    match = null;
+                    regex.lastIndex = 0;
+                    
+                    while ((execResult = regex.exec(unprocessedText)) !== null) {
+                        if (execResult.index >= 15) { match = execResult; break; }
+                    }
+                    
+                    if (!match && unprocessedText.length > 80) {
+                        let lastSpace = unprocessedText.lastIndexOf(" ", 80);
+                        if (lastSpace > 20) match = { index: lastSpace, 0: " " };
+                        else match = { index: 80, 0: "" };
+                    }
                 }
             };
 
@@ -227,7 +222,7 @@
 
         async function processOpenAITranslation(koreanText, msgId) {
             if (!OPENAI_API_KEY) {
-                appendLogMessage(koreanText, msgId, true, "<span style='color:red;'>[오류] 상단에 API 키를 먼저 입력하고 저장해 주세요.</span>");
+                appendLogMessage(koreanText, msgId, true, "<span style='color:red;'>[오류] API 키를 입력해 주세요.</span>");
                 return;
             }
 
@@ -236,8 +231,7 @@
 다음 목사님의 설교 발화를 읽고:
 1) 한국어 오탈자와 띄어쓰기를 문맥에 맞게 다듬어 교정해.
 2) 나머지 7개 언어로 자연스럽고 영적인 울림이 있도록 번역해.
-3) [원문 사수] 원문에 있는 단어를 임의로 빼거나 삭제하지 말고 모두 포함해.
-4) [요약 및 중략 절대 금지] 내용을 임의로 요약하거나 생략하지 마.
+3) 원문에 있는 단어를 임의로 빼거나 삭제하지 말고 모두 포함해.
 
 반드시 아래 JSON 형식으로만 응답해:
 {
@@ -251,7 +245,7 @@
   "ru": "러시아어 번역"
 }
 
-발화 원본: "${koreanTest}"
+발화 원본: "${koreanText}"
 `;
 
             try {
@@ -265,14 +259,14 @@
                         model: "gpt-4o",
                         messages: [{ role: "user", content: prompt }],
                         response_format: { type: "json_object" },
-                        temperature: 0.1
+                        temperature: 0.2
                     })
                 });
 
                 const data = await response.json();
                 
                 if (data.error) {
-                    appendLogMessage(koreanTest, msgId, true, `<span style='color:red;'>[OpenAI 오류] ${data.error.message}</span>`);
+                    appendLogMessage(koreanText, msgId, true, `<span style='color:red;'>[오류] ${data.error.message}</span>`);
                     return;
                 }
 
@@ -291,35 +285,27 @@
 
                 fetch(FIREBASE_URL, { method: "PATCH", body: JSON.stringify(translationPayload) }).catch(e => {});
 
-            } catch (error) {
-                console.error("OpenAI 통역 오류:", error);
-            }
+            } catch (error) {}
         }
 
         function startBroadcast() {
             if (!OPENAI_API_KEY) {
-                alert("위에 OpenAI API 키를 먼저 입력하고 [내 PC에 저장] 버튼을 눌러주세요!");
+                alert("API 키를 먼저 입력하고 저장해주세요!");
                 return;
             }
             
-            isBroadcasting = true; unprocessedFinalText = ""; currentSentenceId = Date.now();
-            
-            const rt = document.getElementById('realtimeText');
-            rt.innerText = "⏳ 마이크 서버에 연결 중입니다...";
-            rt.style.color = "#FF9800";
-            
+            isBroadcasting = true; globalFinalText = ""; processedLength = 0; unprocessedText = ""; currentSentenceId = Date.now();
             recognition.start();
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'inline-block';
 
-            // 남은 잔여 텍스트 처리 주기를 1.5초로 단축하여 짧은 토막도 빠르게 털어냄
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
-
-                    if (silenceDuration > 1500 && unprocessedFinalText.trim().length > 0) {
-                        let sentenceToProcess = unprocessedFinalText.trim();
-                        unprocessedFinalText = "";
+                    if (silenceDuration > 4500 && unprocessedText.trim().length > 0) {
+                        let sentenceToProcess = unprocessedText.trim();
+                        processedLength += unprocessedText.length;
+                        unprocessedText = "";
                         
                         let idToProcess = currentSentenceId;
                         currentSentenceId = Date.now();
@@ -328,7 +314,7 @@
                         processOpenAITranslation(sentenceToProcess, idToProcess);
                     }
                 }
-            }, 500);
+            }, 1000);
         }
         
         async function stopBroadcast() {
@@ -336,11 +322,6 @@
             if(recognition) recognition.stop();
             document.getElementById('startBtn').style.display = 'inline-block';
             document.getElementById('stopBtn').style.display = 'none';
-            
-            const rt = document.getElementById('realtimeText');
-            rt.innerText = "대기 중...";
-            rt.style.color = "#ffeb3b";
-            
             fetch(FIREBASE_URL, { method: "PUT", body: JSON.stringify({ _timestamp: Date.now() }) });
         }
     </script>
