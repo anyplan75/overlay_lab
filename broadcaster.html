@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (안정적 콤팩트 분할)</title>
+    <title>예배 자막 송출기 (과부하 제어 및 무손실 분할)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -62,12 +62,13 @@
         let isBroadcasting = false;
         let folderHandle = null;
         
-        let globalFinalText = "";
-        let processedLength = 0;
-        let unprocessedText = "";
+        let unprocessedFinalText = "";
         let currentSentenceId = Date.now();
         let lastSpeechTime = Date.now();
         let silenceTimer = null;
+        
+        // 💡 렉 방지용 트래픽 제어 변수 (부하 차단)
+        let lastLivePushTime = 0;
 
         async function connectLocalFolder() {
             try {
@@ -87,6 +88,33 @@
             } catch (error) {}
         }
 
+        // 💡 억지로 자르는 코드를 삭제하고, 문맥이 끊기지 않는 '안전한 절단'만 남겼습니다.
+        function findCutMatch(text) {
+            // 1순위: 확실한 문장 끝맺음말
+            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|었다|았다|했다|인다|이다)(\s|[.,?!]|$)/g;
+            let execResult;
+            
+            while ((execResult = regexEnd.exec(text)) !== null) {
+                if (execResult.index >= 10) return execResult;
+            }
+            
+            // 2순위: 문장이 길어질 때 (50자 초과) 안전한 연결어미에서만 분할
+            if (text.length > 50) {
+                let regexClause = /(고|며|는데|지만|면서|니까|어서|아서|으니|도록|하며|하고)(\s)/g;
+                let match = null;
+                while ((execResult = regexClause.exec(text)) !== null) {
+                    if (execResult.index >= 20) {
+                        match = execResult;
+                        if (execResult.index > 80) break; // 80자 이전의 가장 안전한 어미 선택
+                    }
+                }
+                if (match) return match;
+            }
+            
+            // 끝맺음이나 연결어미가 없으면 절대 억지로 강제 절단하지 않고 그대로 대기합니다. (문장 손실 완벽 방지)
+            return null;
+        }
+
         if (!('webkitSpeechRecognition' in window)) {
             alert("구글 크롬을 사용해 주십시오.");
         } else {
@@ -97,64 +125,52 @@
 
             recognition.onstart = function() {
                 const rt = document.getElementById('realtimeText');
-                rt.innerText = "🟢 마이크 준비 완료!";
+                rt.innerText = "🟢 마이크 준비 완료! (말씀을 시작해 주세요)";
                 rt.style.color = "#4CAF50";
             };
 
             recognition.onresult = function(event) {
                 lastSpeechTime = Date.now();
-                let currentInterim = "";
+                let interimText = "";
 
                 document.getElementById('realtimeText').style.color = "#ffeb3b";
 
                 for (let i = event.resultIndex; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
-                        globalFinalText += event.results[i][0].transcript;
+                        unprocessedFinalText += event.results[i][0].transcript;
                     } else {
-                        currentInterim += event.results[i][0].transcript;
+                        interimText += event.results[i][0].transcript;
                     }
                 }
 
-                let totalText = globalFinalText + currentInterim;
-                unprocessedText = totalText.substring(processedLength);
-
-                let liveText = unprocessedText.trim();
+                let liveText = (unprocessedFinalText + interimText).trim();
+                
                 if (liveText) {
                     document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
                     
-                    fetch(FIREBASE_URL, {
-                        method: "PATCH",
-                        body: JSON.stringify({
-                            _timestamp: Date.now(),
-                            ko: { text: liveText + "...", id: currentSentenceId }
-                        })
-                    }).catch(e => {});
-                    
-                    saveTextToFile('temp_live.txt', liveText);
+                    // 💡 컴퓨터 부하 방지: 0.4초(400ms)에 한 번만 서버로 전송합니다.
+                    if (Date.now() - lastLivePushTime > 400) {
+                        lastLivePushTime = Date.now();
+                        
+                        fetch(FIREBASE_URL, {
+                            method: "PATCH",
+                            body: JSON.stringify({
+                                _timestamp: Date.now(),
+                                ko: { text: liveText + "...", id: currentSentenceId }
+                            })
+                        }).catch(e => {});
+                        
+                        saveTextToFile('temp_live.txt', liveText);
+                    }
                 }
 
-                // 1순위: 확실한 문장 끝맺음말
-                let regex = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|[요다까나])(\s|[.,?!]|$)/g;
-                let match = null;
-                let execResult;
-                
-                while ((execResult = regex.exec(unprocessedText)) !== null) {
-                    if (execResult.index >= 15) { match = execResult; break; }
-                }
-
-                // 2순위: 캡처처럼 성경 구절처럼 길게 이어질 때, 45자를 넘어가면 숨을 고르듯 자연스러운 띄어쓰기에서 컷!
-                if (!match && unprocessedText.length > 45) {
-                    let lastSpace = unprocessedText.lastIndexOf(" ", 40);
-                    if (lastSpace > 15) match = { index: lastSpace, 0: " " };
-                    else match = { index: 45, 0: "" };
-                }
+                let match = findCutMatch(unprocessedFinalText);
                 
                 while (match) {
                     let cutIndex = match.index + match[0].length;
-                    let sentenceToProcess = unprocessedText.substring(0, cutIndex).trim();
+                    let sentenceToProcess = unprocessedFinalText.substring(0, cutIndex).trim();
                     
-                    processedLength += cutIndex;
-                    unprocessedText = totalText.substring(processedLength);
+                    unprocessedFinalText = unprocessedFinalText.substring(cutIndex);
                     
                     let idToProcess = currentSentenceId;
                     currentSentenceId = Date.now();
@@ -164,18 +180,7 @@
                         processOpenAITranslation(sentenceToProcess, idToProcess);
                     }
                     
-                    match = null;
-                    regex.lastIndex = 0;
-                    
-                    while ((execResult = regex.exec(unprocessedText)) !== null) {
-                        if (execResult.index >= 15) { match = execResult; break; }
-                    }
-
-                    if (!match && unprocessedText.length > 45) {
-                        let lastSpace = unprocessedText.lastIndexOf(" ", 40);
-                        if (lastSpace > 15) match = { index: lastSpace, 0: " " };
-                        else match = { index: 45, 0: "" };
-                    }
+                    match = findCutMatch(unprocessedFinalText);
                 }
             };
 
@@ -224,16 +229,18 @@
 
         async function processOpenAITranslation(koreanText, msgId) {
             if (!OPENAI_API_KEY) {
-                appendLogMessage(koreanText, msgId, true, "<span style='color:red;'>[오류] API 키를 입력해 주세요.</span>");
+                appendLogMessage(koreanText, msgId, true, "<span style='color:red;'>[오류] 상단에 API 키를 먼저 입력하고 저장해 주세요.</span>");
                 return;
             }
 
+            // 💡 생략 및 원문 훼손을 방지하는 강력한 지시어 복구
             const prompt = `
 너는 기독교 예배 설교를 전담하는 최고 수준의 동시통역사야.
 다음 목사님의 설교 발화를 읽고:
-1) 한국어 오탈자와 띄어쓰기를 문맥에 맞게 다듬어 교정해.
+1) 한국어 오탈자와 띄어쓰기를 문맥에 맞게 다듬어 교정해. 이때 설교에 어울리는 은혜로운 어휘와 존댓말을 살려야 해.
 2) 나머지 7개 언어로 자연스럽고 영적인 울림이 있도록 번역해.
-3) 원문에 있는 단어를 임의로 빼거나 삭제하지 말고 모두 포함해.
+3) [가장 중요] 목사님이 하신 말씀 속의 단어, 표현, 접속사를 절대 임의로 빼거나 삭제하지 마. 원문에 있는 단어는 100% 모두 포함하여 번역해.
+4) 내용을 임의로 요약하거나 중간을 생략(중략)하지 마.
 
 반드시 아래 JSON 형식으로만 응답해:
 {
@@ -261,14 +268,14 @@
                         model: "gpt-4o",
                         messages: [{ role: "user", content: prompt }],
                         response_format: { type: "json_object" },
-                        temperature: 0.2
+                        temperature: 0.1
                     })
                 });
 
                 const data = await response.json();
                 
                 if (data.error) {
-                    appendLogMessage(koreanText, msgId, true, `<span style='color:red;'>[오류] ${data.error.message}</span>`);
+                    appendLogMessage(koreanText, msgId, true, `<span style='color:red;'>[OpenAI 오류] ${data.error.message}</span>`);
                     return;
                 }
 
@@ -287,27 +294,35 @@
 
                 fetch(FIREBASE_URL, { method: "PATCH", body: JSON.stringify(translationPayload) }).catch(e => {});
 
-            } catch (error) {}
+            } catch (error) {
+                console.error("OpenAI 통역 오류:", error);
+            }
         }
 
         function startBroadcast() {
             if (!OPENAI_API_KEY) {
-                alert("API 키를 먼저 입력하고 저장해주세요!");
+                alert("위에 OpenAI API 키를 먼저 입력하고 [내 PC에 저장] 버튼을 눌러주세요!");
                 return;
             }
             
-            isBroadcasting = true; globalFinalText = ""; processedLength = 0; unprocessedText = ""; currentSentenceId = Date.now();
+            isBroadcasting = true; unprocessedFinalText = ""; currentSentenceId = Date.now();
+            
+            const rt = document.getElementById('realtimeText');
+            rt.innerText = "⏳ 마이크 서버에 연결 중입니다...";
+            rt.style.color = "#FF9800";
+            
             recognition.start();
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'inline-block';
 
+            // 💡 침묵 감지: 3.5초 이상 말씀을 멈추셨을 때만 남아있는 문장을 부드럽게 털어냅니다.
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
-                    if (silenceDuration > 3000 && unprocessedText.trim().length > 0) {
-                        let sentenceToProcess = unprocessedText.trim();
-                        processedLength += unprocessedText.length;
-                        unprocessedText = "";
+
+                    if (silenceDuration > 3500 && unprocessedFinalText.trim().length > 0) {
+                        let sentenceToProcess = unprocessedFinalText.trim();
+                        unprocessedFinalText = "";
                         
                         let idToProcess = currentSentenceId;
                         currentSentenceId = Date.now();
@@ -324,6 +339,11 @@
             if(recognition) recognition.stop();
             document.getElementById('startBtn').style.display = 'inline-block';
             document.getElementById('stopBtn').style.display = 'none';
+            
+            const rt = document.getElementById('realtimeText');
+            rt.innerText = "대기 중...";
+            rt.style.color = "#ffeb3b";
+            
             fetch(FIREBASE_URL, { method: "PUT", body: JSON.stringify({ _timestamp: Date.now() }) });
         }
     </script>
