@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (AI 오지랖 방지 및 속도 복구)</title>
+    <title>예배 자막 송출기 (실시간 모드 스위치 추가)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -23,6 +23,15 @@
             max-height: 90px; overflow-y: auto;
         }
         .key-container { background: #2c3e50; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        
+        /* 💡 스위치 토글 디자인 */
+        .switch-container { background: #34495e; padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 15px; display: inline-block; }
+        .switch { position: relative; display: inline-block; width: 60px; height: 34px; vertical-align: middle; margin-left: 10px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px; }
+        .slider:before { position: absolute; content: ""; height: 26px; width: 26px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #2196F3; }
+        input:checked + .slider:before { transform: translateX(26px); }
     </style>
 </head>
 <body>
@@ -34,6 +43,17 @@
         <input type="password" id="apiKeyInput" placeholder="sk-proj-..." style="padding: 10px; font-size: 16px; width: 300px; border-radius: 5px; border: none;">
         <button class="btn" style="padding: 10px 20px; font-size: 16px; margin: 0 0 0 10px; background: #3498db;" onclick="saveApiKey()">내 PC에 저장</button>
         <p style="font-size: 13px; color: #bdc3c7; margin-top: 10px;">* 한 번만 저장하면 브라우저가 기억합니다. (깃허브 코드에는 절대 올라가지 않아 안전합니다)</p>
+    </div>
+
+    <!-- 💡 실시간 덮어쓰기 모드 ON/OFF 스위치 -->
+    <div style="text-align: center;">
+        <div class="switch-container">
+            <span style="font-weight: bold; font-size: 16px;">⚡ 실시간 덮어쓰기 모드 (Live Preview):</span>
+            <label class="switch">
+                <input type="checkbox" id="liveToggle" checked>
+                <span class="slider"></span>
+            </label>
+        </div>
     </div>
 
     <div style="text-align: center;">
@@ -153,13 +173,17 @@
                     let cutIndex = match.index + match[0].length;
                     let sentenceToProcess = unprocessedText.substring(0, cutIndex).trim();
                     
-                    fetch(FIREBASE_URL, {
-                        method: "PATCH",
-                        body: JSON.stringify({
-                            _timestamp: Date.now(),
-                            ko: { text: sentenceToProcess, id: currentSentenceId }
-                        })
-                    }).catch(e => {});
+                    // 💡 스위치가 켜져 있을 때만 문장이 잘릴 때 임시 원문을 실시간 송출합니다.
+                    const isLiveOn = document.getElementById('liveToggle').checked;
+                    if (isLiveOn) {
+                        fetch(FIREBASE_URL, {
+                            method: "PATCH",
+                            body: JSON.stringify({
+                                _timestamp: Date.now(),
+                                ko: { text: sentenceToProcess, id: currentSentenceId }
+                            })
+                        }).catch(e => {});
+                    }
 
                     totalProcessedLength += cutIndex;
                     unprocessedText = totalText.substring(totalProcessedLength);
@@ -176,12 +200,14 @@
                 }
 
                 let liveText = unprocessedText.trim();
-                
+                const isLiveOn = document.getElementById('liveToggle').checked;
+
                 if (liveText) {
                     let displayLiveText = liveText.length > 70 ? "..." + liveText.substring(liveText.length - 70) : liveText;
                     document.getElementById('realtimeText').innerText = `듣는 중: ${displayLiveText}`;
                     
-                    if (Date.now() - lastLivePushTime > 200) {
+                    // 💡 스위치가 켜져 있을 때만 타이핑되는 중간 과정을 실시간으로 수신기에 쏩니다. (꺼져 있으면 AI 교정본이 뜰 때까지 화면이 조용합니다)
+                    if (isLiveOn && Date.now() - lastLivePushTime > 200) {
                         lastLivePushTime = Date.now();
                         fetch(FIREBASE_URL, {
                             method: "PATCH",
@@ -327,17 +353,19 @@
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
                     
-                    // 💡 다시 속도를 빠릿빠릿하게 2초(2000ms)로 복구했습니다.
                     if (silenceDuration > 2000 && globalUnprocessedText.trim().length > 0) {
                         let sentenceToProcess = globalUnprocessedText.trim();
                         
-                        fetch(FIREBASE_URL, {
-                            method: "PATCH",
-                            body: JSON.stringify({
-                                _timestamp: Date.now(),
-                                ko: { text: sentenceToProcess, id: currentSentenceId }
-                            })
-                        }).catch(e => {});
+                        const isLiveOn = document.getElementById('liveToggle').checked;
+                        if (isLiveOn) {
+                            fetch(FIREBASE_URL, {
+                                method: "PATCH",
+                                body: JSON.stringify({
+                                    _timestamp: Date.now(),
+                                    ko: { text: sentenceToProcess, id: currentSentenceId }
+                                })
+                            }).catch(e => {});
+                        }
 
                         totalProcessedLength += globalUnprocessedText.length;
                         globalUnprocessedText = "";
