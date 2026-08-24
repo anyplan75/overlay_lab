@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (안전 저장 모드)</title>
+    <title>예배 자막 송출기 (메모리 최적화 및 안전 저장 모드)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -22,9 +22,8 @@
 </head>
 <body>
 
-    <h1>🎙️ 실시간 다중 송출 및 파일 저장 시스템</h1>
+    <h1>🎙️ 실시간 다중 송출 시스템</h1>
     
-    <!-- 💡 API 키를 화면에서 직접 입력받아 내 PC에만 저장하는 영역 -->
     <div class="key-container">
         <label for="apiKeyInput" style="font-weight: bold; font-size: 18px; margin-right: 10px;">🔑 OpenAI API 키:</label>
         <input type="password" id="apiKeyInput" placeholder="sk-proj-..." style="padding: 10px; font-size: 16px; width: 300px; border-radius: 5px; border: none;">
@@ -45,7 +44,6 @@
     <script>
         const FIREBASE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/subtitles.json";
         
-        // 💡 저장된 API 키 불러오기
         let OPENAI_API_KEY = localStorage.getItem('saved_openai_key') || "";
         document.getElementById('apiKeyInput').value = OPENAI_API_KEY;
 
@@ -64,11 +62,8 @@
         let isBroadcasting = false;
         let folderHandle = null;
         
-        let globalFinalText = "";
-        let processedLength = 0;
-        let unprocessedText = "";
+        let unprocessedFinalText = "";
         let currentSentenceId = Date.now();
-        let fullSermonText = "";
         let lastSpeechTime = Date.now();
         let silenceTimer = null;
 
@@ -100,20 +95,18 @@
 
             recognition.onresult = function(event) {
                 lastSpeechTime = Date.now();
-                let currentInterim = "";
+                let interimText = "";
 
+                // 💡 변경점: 무한 누적 방지. 최종 확정된 텍스트와 임시 텍스트를 분리하여 가볍게 처리
                 for (let i = event.resultIndex; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
-                        globalFinalText += event.results[i][0].transcript;
+                        unprocessedFinalText += event.results[i][0].transcript;
                     } else {
-                        currentInterim += event.results[i][0].transcript;
+                        interimText += event.results[i][0].transcript;
                     }
                 }
 
-                let totalText = globalFinalText + currentInterim;
-                unprocessedText = totalText.substring(processedLength);
-
-                let liveText = unprocessedText.trim();
+                let liveText = (unprocessedFinalText + interimText).trim();
                 if (liveText) {
                     document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
                     
@@ -132,23 +125,22 @@
                 let match = null;
                 let execResult;
                 
-                while ((execResult = regex.exec(unprocessedText)) !== null) {
+                while ((execResult = regex.exec(unprocessedFinalText)) !== null) {
                     if (execResult.index >= 15) { match = execResult; break; }
                 }
 
-                if (!match && unprocessedText.length > 80) {
-                    let lastSpace = unprocessedText.lastIndexOf(" ", 80);
+                if (!match && unprocessedFinalText.length > 80) {
+                    let lastSpace = unprocessedFinalText.lastIndexOf(" ", 80);
                     if (lastSpace > 20) match = { index: lastSpace, 0: " " };
                     else match = { index: 80, 0: "" };
                 }
                 
                 while (match) {
                     let cutIndex = match.index + match[0].length;
-                    let sentenceToProcess = unprocessedText.substring(0, cutIndex).trim();
+                    let sentenceToProcess = unprocessedFinalText.substring(0, cutIndex).trim();
                     
-                    processedLength += cutIndex;
-                    unprocessedText = totalText.substring(processedLength);
-                    fullSermonText += sentenceToProcess + " ";
+                    // 💡 변경점: 처리가 끝난 문장은 메모리에서 즉시 삭제
+                    unprocessedFinalText = unprocessedFinalText.substring(cutIndex);
                     
                     let idToProcess = currentSentenceId;
                     currentSentenceId = Date.now();
@@ -161,12 +153,12 @@
                     match = null;
                     regex.lastIndex = 0;
                     
-                    while ((execResult = regex.exec(unprocessedText)) !== null) {
+                    while ((execResult = regex.exec(unprocessedFinalText)) !== null) {
                         if (execResult.index >= 15) { match = execResult; break; }
                     }
                     
-                    if (!match && unprocessedText.length > 80) {
-                        let lastSpace = unprocessedText.lastIndexOf(" ", 80);
+                    if (!match && unprocessedFinalText.length > 80) {
+                        let lastSpace = unprocessedFinalText.lastIndexOf(" ", 80);
                         if (lastSpace > 20) match = { index: lastSpace, 0: " " };
                         else match = { index: 80, 0: "" };
                     }
@@ -174,6 +166,7 @@
             };
 
             recognition.onend = function() {
+                // 끊어지더라도 방송 중이면 즉시 다시 시작
                 if (isBroadcasting) { setTimeout(() => { try { recognition.start(); } catch(e) {} }, 10); }
             };
         }
@@ -291,7 +284,7 @@
                 return;
             }
             
-            isBroadcasting = true; fullSermonText = ""; globalFinalText = ""; processedLength = 0; unprocessedText = ""; currentSentenceId = Date.now();
+            isBroadcasting = true; unprocessedFinalText = ""; currentSentenceId = Date.now();
             recognition.start();
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'inline-block';
@@ -299,11 +292,16 @@
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
-                    if (silenceDuration > 4500 && unprocessedText.trim().length > 0) {
-                        let sentenceToProcess = unprocessedText.trim();
-                        processedLength += unprocessedText.length;
-                        unprocessedText = "";
-                        fullSermonText += sentenceToProcess + " ";
+                    
+                    // 💡 핵심 변경점: 2.5초 이상 침묵 시 엔진 강제 리프레시 (메모리 찌꺼기 제거)
+                    if (silenceDuration > 2500 && silenceDuration < 3500) {
+                        try { recognition.stop(); } catch(e) {}
+                    }
+
+                    // 4.5초 이상 침묵 시 남은 텍스트 강제 전송
+                    if (silenceDuration > 4500 && unprocessedFinalText.trim().length > 0) {
+                        let sentenceToProcess = unprocessedFinalText.trim();
+                        unprocessedFinalText = ""; // 텍스트 초기화
                         
                         let idToProcess = currentSentenceId;
                         currentSentenceId = Date.now();
