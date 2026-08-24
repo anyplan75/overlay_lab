@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (네트워크 병목 해결)</title>
+    <title>예배 자막 송출기 (문장 단위 정밀 분할)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -12,11 +12,11 @@
     <style>
         body { font-family: 'Malgun Gothic', sans-serif; background: #1e1e1e; color: white; padding: 20px; margin: 0; user-select: none; }
         h1 { color: #4CAF50; text-align: center; margin-bottom: 10px; }
-        .btn { padding: 15px 30px; font-size: 18px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; margin: 10px; }
+        .btn { padding: 15px 30px; font-size: 18px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; margin: 10px; transition: 0.3s; }
         #folderBtn { background-color: #FF9800; color: white; }
         #startBtn { background-color: #f44336; color: white; display: none; }
         #stopBtn { background-color: #2196F3; color: white; display: none; }
-        #realtimeText { background: #333; color: #ffeb3b; padding: 15px; border-radius: 8px; font-size: 22px; margin-top: 20px; font-weight: bold; text-align: center; }
+        #realtimeText { background: #333; color: #ffeb3b; padding: 15px; border-radius: 8px; font-size: 22px; margin-top: 20px; font-weight: bold; text-align: center; transition: color 0.3s; }
         .key-container { background: #2c3e50; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
     </style>
 </head>
@@ -66,8 +66,6 @@
         let currentSentenceId = Date.now();
         let lastSpeechTime = Date.now();
         let silenceTimer = null;
-        
-        // 💡 추가된 변수: 파이어베이스 서버로 글자를 쏜 마지막 시간을 기억합니다.
         let lastLivePushTime = 0;
 
         async function connectLocalFolder() {
@@ -88,6 +86,43 @@
             } catch (error) {}
         }
 
+        // 💡 핵심 로직: 문장을 문법적으로 안전하게 자르는 전담 함수
+        function findCutMatch(text) {
+            // 1순위: 확실한 문장 끝맺음말
+            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|[요다까죠네])(\s|[.,?!]|$)/g;
+            // 2순위: 문장이 길어질 때 자를 자연스러운 연결어미
+            let regexClause = /(고|며|는데|지만|면서|니까|어서|으니|도록|하며|하고)(\s)/g;
+            
+            let execResult;
+            
+            // 1. 먼저 '문장 끝맺음말'을 찾습니다. (너무 짧게 잘리지 않도록 10글자 이후부터)
+            while ((execResult = regexEnd.exec(text)) !== null) {
+                if (execResult.index >= 10) return execResult;
+            }
+            
+            // 2. 문장이 안 끝나고 50자가 넘어가면, '연결 어미'에서 잘라서 끊어갑니다. (생략 방지)
+            if (text.length > 50) {
+                let match = null;
+                while ((execResult = regexClause.exec(text)) !== null) {
+                    if (execResult.index >= 20) {
+                        match = execResult;
+                        // 70자가 넘어가기 직전의 가장 마지막 연결어미를 선택합니다.
+                        if (execResult.index > 70) break;
+                    }
+                }
+                if (match) return match;
+            }
+            
+            // 3. 연결어미조차 없는데 80자가 넘어가면 어쩔 수 없이 띄어쓰기에서 자릅니다.
+            if (text.length > 80) {
+                let lastSpace = text.lastIndexOf(" ", 80);
+                if (lastSpace > 20) return { index: lastSpace, 0: " " };
+                return { index: 80, 0: "" };
+            }
+            
+            return null;
+        }
+
         if (!('webkitSpeechRecognition' in window)) {
             alert("구글 크롬을 사용해 주십시오.");
         } else {
@@ -96,9 +131,17 @@
             recognition.interimResults = true;
             recognition.lang = 'ko-KR';
 
+            recognition.onstart = function() {
+                const rt = document.getElementById('realtimeText');
+                rt.innerText = "🟢 마이크 준비 완료! (말씀을 시작해 주세요)";
+                rt.style.color = "#4CAF50";
+            };
+
             recognition.onresult = function(event) {
                 lastSpeechTime = Date.now();
                 let interimText = "";
+
+                document.getElementById('realtimeText').style.color = "#ffeb3b";
 
                 for (let i = event.resultIndex; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
@@ -111,11 +154,9 @@
                 let liveText = (unprocessedFinalText + interimText).trim();
                 
                 if (liveText) {
-                    // 내 PC 화면에는 즉시 즉시 글자를 띄워줍니다 (딜레이 없음)
                     document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
                     
-                    // 💡 핵심 해결책: 서버로 전송하는 건 0.4초(400ms)에 한 번씩만 모아서 쏩니다.
-                    if (Date.now() - lastLivePushTime > 400) {
+                    if (Date.now() - lastLivePushTime > 200) {
                         lastLivePushTime = Date.now();
                         
                         fetch(FIREBASE_URL, {
@@ -130,19 +171,8 @@
                     }
                 }
 
-                let regex = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|[요다까나])(\s|[.,?!]|$)/g;
-                let match = null;
-                let execResult;
-                
-                while ((execResult = regex.exec(unprocessedFinalText)) !== null) {
-                    if (execResult.index >= 15) { match = execResult; break; }
-                }
-
-                if (!match && unprocessedFinalText.length > 80) {
-                    let lastSpace = unprocessedFinalText.lastIndexOf(" ", 80);
-                    if (lastSpace > 20) match = { index: lastSpace, 0: " " };
-                    else match = { index: 80, 0: "" };
-                }
+                // 새로 만든 findCutMatch 함수를 이용해 텍스트를 논리적으로 자릅니다.
+                let match = findCutMatch(unprocessedFinalText);
                 
                 while (match) {
                     let cutIndex = match.index + match[0].length;
@@ -158,18 +188,7 @@
                         processOpenAITranslation(sentenceToProcess, idToProcess);
                     }
                     
-                    match = null;
-                    regex.lastIndex = 0;
-                    
-                    while ((execResult = regex.exec(unprocessedFinalText)) !== null) {
-                        if (execResult.index >= 15) { match = execResult; break; }
-                    }
-                    
-                    if (!match && unprocessedFinalText.length > 80) {
-                        let lastSpace = unprocessedFinalText.lastIndexOf(" ", 80);
-                        if (lastSpace > 20) match = { index: lastSpace, 0: " " };
-                        else match = { index: 80, 0: "" };
-                    }
+                    match = findCutMatch(unprocessedFinalText);
                 }
             };
 
@@ -222,11 +241,13 @@
                 return;
             }
 
+            // 💡 생략 및 요약 방지를 위한 강력한 경고 지시어 추가
             const prompt = `
 너는 기독교 예배 설교를 전담하는 최고 수준의 동시통역사야.
 다음 목사님의 설교 발화를 읽고:
 1) 한국어 오탈자와 띄어쓰기를 문맥에 맞게 다듬어 교정해. 이때 설교에 어울리는 은혜로운 어휘와 존댓말, 신학적 뉘앙스를 철저히 살려야 해.
 2) 나머지 7개 언어로 자연스럽고 영적인 울림이 있도록 번역해. 기독교 전문 용어(예: 보혈, 성령, 구원 등)를 정확한 각국 기독교 용어로 매칭해.
+3) [가장 중요] 길이가 길거나 복잡하더라도 원문의 내용을 절대 요약하거나 생략(중략)하지 말고, 100% 빠짐없이 1:1로 모든 문장을 번역 및 교정해.
 
 반드시 아래 JSON 형식으로만 응답해:
 {
@@ -292,6 +313,11 @@
             }
             
             isBroadcasting = true; unprocessedFinalText = ""; currentSentenceId = Date.now();
+            
+            const rt = document.getElementById('realtimeText');
+            rt.innerText = "⏳ 마이크 서버에 연결 중입니다...";
+            rt.style.color = "#FF9800";
+            
             recognition.start();
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'inline-block';
@@ -300,11 +326,7 @@
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
                     
-                    if (silenceDuration > 2500 && silenceDuration < 3500) {
-                        try { recognition.stop(); } catch(e) {}
-                    }
-
-                    if (silenceDuration > 4500 && unprocessedFinalText.trim().length > 0) {
+                    if (silenceDuration > 3500 && unprocessedFinalText.trim().length > 0) {
                         let sentenceToProcess = unprocessedFinalText.trim();
                         unprocessedFinalText = "";
                         
@@ -323,6 +345,11 @@
             if(recognition) recognition.stop();
             document.getElementById('startBtn').style.display = 'inline-block';
             document.getElementById('stopBtn').style.display = 'none';
+            
+            const rt = document.getElementById('realtimeText');
+            rt.innerText = "대기 중...";
+            rt.style.color = "#ffeb3b";
+            
             fetch(FIREBASE_URL, { method: "PUT", body: JSON.stringify({ _timestamp: Date.now() }) });
         }
     </script>
