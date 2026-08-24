@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (문장 분할 길이 최적화)</title>
+    <title>예배 자막 송출기 (원문 보존 강화)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -86,36 +86,31 @@
             } catch (error) {}
         }
 
-        // 💡 자르는 길이를 대폭 줄여서 짧고 빠릿빠릿하게 돌아가게 수정
         function findCutMatch(text) {
-            // 1순위: 종결어미 확인 (포괄적인 어미 추가)
-            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|었다|았다|했다|인다|이다|[요다까죠네])(\s|[.,?!]|$)/g;
+            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|었다|았다|했다|인다|이다)(\s|[.,?!]|$)/g;
             let execResult;
             
             while ((execResult = regexEnd.exec(text)) !== null) {
-                // 💡 기존 15자 -> 10자로 줄여 짧은 문장도 바로바로 넘김
-                if (execResult.index >= 10) return execResult;
+                if (execResult.index >= 15) return execResult;
             }
             
-            // 2순위: 끝맺음이 안 나와도 문장이 40자를 넘어가면 연결어미에서 자르기 시도 (기존 80자 -> 40자)
-            if (text.length > 40) {
+            if (text.length > 80) {
                 let regexClause = /(고|며|는데|지만|면서|니까|어서|아서|으니|도록|하며|하고)(\s)/g;
                 let match = null;
                 while ((execResult = regexClause.exec(text)) !== null) {
-                    if (execResult.index >= 20) {
+                    if (execResult.index >= 40) {
                         match = execResult;
-                        if (execResult.index > 60) break; // 너무 길어지기 전의 어미를 채택
+                        if (execResult.index > 100) break;
                     }
                 }
                 if (match) return match;
                 
-                // 3순위: 연결어미조차 안 보이는데 70자가 넘어가면 강제 띄어쓰기 절단 (기존 120자 -> 70자)
-                if (text.length > 70) {
-                    let lastSpace = text.lastIndexOf(" ", 65);
-                    if (lastSpace > 20) return { index: lastSpace, 0: " " };
-                    return { index: 70, 0: "" };
+                if (text.length > 120) {
+                    let lastSpace = text.lastIndexOf(" ", 115);
+                    if (lastSpace > 50) return { index: lastSpace, 0: " " };
                 }
             }
+            
             return null;
         }
 
@@ -159,7 +154,7 @@
                             method: "PATCH",
                             body: JSON.stringify({
                                 _timestamp: Date.now(),
-                                ko: { text: liveText + "...", id: currentSentenceId, isFinal: false }
+                                ko: { text: liveText + "...", id: currentSentenceId }
                             })
                         }).catch(e => {});
                         
@@ -236,13 +231,14 @@
                 return;
             }
 
+            // 💡 원문 보존 및 누락 방지 조항을 대폭 강화한 프롬프트
             const prompt = `
 너는 기독교 예배 설교를 전담하는 최고 수준의 동시통역사야.
 다음 목사님의 설교 발화를 읽고:
-1) 한국어 오탈자와 띄어쓰기를 문맥에 맞게 다듬어 교정해. 이때 설교에 어울리는 은혜로운 어휘와 존댓말, 신학적 뉘앙스를 철저히 살려야 해.
+1) 한국어 오탈자와 띄어쓰기를 문맥에 맞게 다듬어 교정해. 이때 설교에 어울리는 은혜로운 어휘와 존댓말, 신학적 뉘앙스를 살려야 해.
 2) 나머지 7개 언어로 자연스럽고 영적인 울림이 있도록 번역해. 기독교 전문 용어(예: 보혈, 성령, 구원 등)를 정확한 각국 기독교 용어로 매칭해.
-3) [가장 중요] 내용이 길거나 복잡하더라도 절대 임의로 요약하거나 생략(중략)하지 말고, 100% 빠짐없이 1:1로 번역해.
-4) [형식 엄수] 문장이 중간에 잘린 채로 끝나더라도 끝에 말줄임표(...)를 임의로 지어내어 붙이지 마. 입력된 텍스트 그대로만 번역해.
+3) [가장 중요 - 원문 사수] 목사님이 하신 말씀 속의 단어, 표현, 접속사(예: "또 하나" 등)를 절대 임의로 빼거나 삭제하지 마. 원문에 있는 단어는 사소해 보여도 100% 모두 포함하여 교정 및 번역해.
+4) [요약 및 중략 절대 금지] 내용을 임의로 요약하거나 중간을 생략하지 마.
 
 반드시 아래 JSON 형식으로만 응답해:
 {
@@ -290,7 +286,7 @@
                 ['ko', 'en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'].forEach(lang => {
                     if (result[lang]) {
                         saveTextToFile(`${lang}.txt`, result[lang]);
-                        translationPayload[lang] = { text: result[lang], id: msgId, isFinal: true };
+                        translationPayload[lang] = { text: result[lang], id: msgId };
                     }
                 });
 
