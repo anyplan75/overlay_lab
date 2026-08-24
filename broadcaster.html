@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (문장 겹침 완벽 해결본)</title>
+    <title>예배 자막 송출기 (글자 증발 완벽 해결본)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -93,15 +93,13 @@
         }
 
         function findCutMatch(text) {
-            // 1순위: 확실한 문장 종결
-            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|거늘|시니|느냐|도다|입니까|입니다)(\s|[.,?!]|$)/g;
+            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|거늘|시니|느냐|도다|입니까|입니다|잖아요)(\s|[.,?!]|$)/g;
             let execResult;
             
             while ((execResult = regexEnd.exec(text)) !== null) {
                 if (execResult.index >= 10) return execResult;
             }
 
-            // 2순위: 60자가 넘어가는 만연체일 경우, 연결어미에서 자연스럽게 절단
             if (text.length >= 60) {
                 let regexClause = /(고|며|는데|지만|면서|니까|어서|아서|으니|도록|하며|하고)(\s)/g;
                 let match = null;
@@ -113,7 +111,6 @@
                 }
                 if (match) return match;
                 
-                // 최후의 보루: 90자가 넘어가는데도 어미가 없으면 어쩔 수 없이 띄어쓰기 절단
                 if (text.length >= 90) {
                     let lastSpace = text.lastIndexOf(" ", 85);
                     if (lastSpace > 20) return { index: lastSpace, 0: " " };
@@ -150,13 +147,22 @@
 
                 let unprocessedText = totalText.substring(totalProcessedLength);
 
-                // 💡 1. 자르기를 "무조건 먼저" 실행합니다. (스필오버 겹침 완벽 차단)
                 let match = findCutMatch(unprocessedText);
                 
                 while (match) {
                     let cutIndex = match.index + match[0].length;
                     let sentenceToProcess = unprocessedText.substring(0, cutIndex).trim();
                     
+                    // 💡 핵심 해결책: 문장을 자르는 순간, 0.2초 타이머를 무시하고
+                    // 완성된 원문("있지 않겠어요")을 화면에 강제로 즉시 쏴버립니다. (삼킴 현상 방지)
+                    fetch(FIREBASE_URL, {
+                        method: "PATCH",
+                        body: JSON.stringify({
+                            _timestamp: Date.now(),
+                            ko: { text: sentenceToProcess, id: currentSentenceId }
+                        })
+                    }).catch(e => {});
+
                     totalProcessedLength += cutIndex;
                     unprocessedText = totalText.substring(totalProcessedLength);
                     
@@ -171,7 +177,6 @@
                     match = findCutMatch(unprocessedText);
                 }
 
-                // 💡 2. 깔끔하게 자르고 남은 순수한 글자만 실시간 화면에 쏩니다.
                 let liveText = unprocessedText.trim();
                 
                 if (liveText) {
@@ -325,6 +330,16 @@
                     
                     if (silenceDuration > 2500 && globalUnprocessedText.trim().length > 0) {
                         let sentenceToProcess = globalUnprocessedText.trim();
+                        
+                        // 남은 찌꺼기를 처리할 때도 화면에 강제로 확실히 쏴줍니다.
+                        fetch(FIREBASE_URL, {
+                            method: "PATCH",
+                            body: JSON.stringify({
+                                _timestamp: Date.now(),
+                                ko: { text: sentenceToProcess, id: currentSentenceId }
+                            })
+                        }).catch(e => {});
+
                         totalProcessedLength += globalUnprocessedText.length;
                         globalUnprocessedText = "";
                         
