@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (서귀포제일교회)</title>
+    <title>예배 자막 송출기 (초단위 즉시 분할)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -86,29 +86,29 @@
             } catch (error) {}
         }
 
-        // 💡 콤팩트 절단기: 문장이 너무 길어져서 화면을 채우기 전에 35~50자 안팎으로 스마트하게 끊어줍니다.
+        // 💡 핵심 튜닝: 무조건 짧게, 조금만 숨을 쉬거나 쉼표/어미가 보이면 곧바로 짤라서 보냄 (최대 30~40자 제한)
         function findCutMatch(text) {
-            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|었다|았다|했다|인다|이다|[.?!])(\s|$)/g;
+            let trimmed = text.trim();
+            // 글자 수가 25자를 넘어가면 조금만 자연스러운 끊김(띄어쓰기, 쉼표, 어미)이 있어도 무조건 잘라냄
+            if (trimmed.length > 25) {
+                // 구두점이나 조사, 연결어미 근처의 공백을 찾아 즉시 커팅
+                let lastSpace = trimmed.lastIndexOf(" ", 35);
+                if (lastSpace > 10) {
+                    return { index: lastSpace, 0: " " };
+                }
+            }
+
+            // 확실한 종결/쉼표 어미가 나오면 즉시 절단
+            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|요|죠|다|까|네|며|고|데|지만)(\s|[.,?!]|$)/g;
             let execResult;
             
             while ((execResult = regexEnd.exec(text)) !== null) {
-                if (execResult.index >= 10) return execResult;
+                if (execResult.index >= 8) return execResult;
             }
-            
-            // 문장이 길어지면(35자 초과) 연결어미나 쉼표 부근에서 빠르게 잘라 가독성 확보
-            if (text.length > 35) {
-                let regexClause = /(고|며|는데|지만|면서|니까|어서|아서|으니|도록|하며|하고)(\s)/g;
-                let match = null;
-                while ((execResult = regexClause.exec(text)) !== null) {
-                    if (execResult.index >= 15) {
-                        match = execResult;
-                        if (execResult.index > 45) break; // 45자를 넘기기 전에 어미에서 컷
-                    }
-                }
-                if (match) return match;
-                
-                let lastSpace = text.lastIndexOf(" ", 40);
-                if (lastSpace > 15) return { index: lastSpace, 0: " " };
+
+            // 만약 글자가 40자를 넘어가면 사정없이 강제 절단
+            if (text.length > 40) {
+                return { index: 40, 0: "" };
             }
             
             return null;
@@ -147,7 +147,7 @@
                 if (liveText) {
                     document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
                     
-                    if (Date.now() - lastLivePushTime > 200) {
+                    if (Date.now() - lastLivePushTime > 150) {
                         lastLivePushTime = Date.now();
                         
                         fetch(FIREBASE_URL, {
@@ -234,10 +234,10 @@
             const prompt = `
 너는 기독교 예배 설교를 전담하는 최고 수준의 동시통역사야.
 다음 목사님의 설교 발화를 읽고:
-1) 한국어 오탈자와 띄어쓰기를 문맥에 맞게 다듬어 교정해. 이때 설교에 어울리는 은혜로운 어휘와 존댓말, 신학적 뉘앙스를 살려야 해.
-2) 나머지 7개 언어로 자연스럽고 영적인 울림이 있도록 번역해. 기독교 전문 용어(예: 보혈, 성령, 구원 등)를 정확한 각국 기독교 용어로 매칭해.
-3) [원문 사수] 목사님이 하신 말씀 속의 단어, 표현, 접속사(예: "또 하나" 등)를 절대 임의로 빼거나 삭제하지 마. 원문에 있는 단어는 사소해 보여도 100% 모두 포함하여 교정 및 번역해.
-4) [요약 및 중략 절대 금지] 내용을 임의로 요약하거나 중간을 생략하지 마.
+1) 한국어 오탈자와 띄어쓰기를 문맥에 맞게 다듬어 교정해.
+2) 나머지 7개 언어로 자연스럽고 영적인 울림이 있도록 번역해.
+3) [원문 사수] 원문에 있는 단어를 임의로 빼거나 삭제하지 말고 모두 포함해.
+4) [요약 및 중략 절대 금지] 내용을 임의로 요약하거나 생략하지 마.
 
 반드시 아래 JSON 형식으로만 응답해:
 {
@@ -251,11 +251,10 @@
   "ru": "러시아어 번역"
 }
 
-발화 원본: "${koreanText}"
+발화 원본: "${koreanTest}"
 `;
 
             try {
-                // 💡 최고 성능의 gpt-4o 프로 모델을 고정으로 사용합니다.
                 const response = await fetch("https://api.openai.com/v1/chat/completions", {
                     method: "POST",
                     headers: {
@@ -273,7 +272,7 @@
                 const data = await response.json();
                 
                 if (data.error) {
-                    appendLogMessage(koreanText, msgId, true, `<span style='color:red;'>[OpenAI 오류] ${data.error.message}</span>`);
+                    appendLogMessage(koreanTest, msgId, true, `<span style='color:red;'>[OpenAI 오류] ${data.error.message}</span>`);
                     return;
                 }
 
@@ -313,11 +312,12 @@
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'inline-block';
 
+            // 남은 잔여 텍스트 처리 주기를 1.5초로 단축하여 짧은 토막도 빠르게 털어냄
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
 
-                    if (silenceDuration > 3500 && unprocessedFinalText.trim().length > 0) {
+                    if (silenceDuration > 1500 && unprocessedFinalText.trim().length > 0) {
                         let sentenceToProcess = unprocessedFinalText.trim();
                         unprocessedFinalText = "";
                         
@@ -328,7 +328,7 @@
                         processOpenAITranslation(sentenceToProcess, idToProcess);
                     }
                 }
-            }, 1000);
+            }, 500);
         }
         
         async function stopBroadcast() {
