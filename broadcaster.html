@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (과부하 제어 및 무손실 분할)</title>
+    <title>예배 자막 송출기 (Pro - 가독성 및 안정성 최종 최적화)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -16,7 +16,13 @@
         #folderBtn { background-color: #FF9800; color: white; }
         #startBtn { background-color: #f44336; color: white; display: none; }
         #stopBtn { background-color: #2196F3; color: white; display: none; }
-        #realtimeText { background: #333; color: #ffeb3b; padding: 15px; border-radius: 8px; font-size: 22px; margin-top: 20px; font-weight: bold; text-align: center; transition: color 0.3s; }
+        /* 💡 실시간 박스 레이아웃 고정 (무한 늘어남 방지) */
+        #realtimeText {
+            background: #333; color: #ffeb3b; padding: 15px; border-radius: 8px;
+            font-size: 22px; margin-top: 20px; font-weight: bold; text-align: center;
+            transition: color 0.3s; word-break: keep-all; white-space: pre-wrap;
+            min-height: 35px; overflow: hidden;
+        }
         .key-container { background: #2c3e50; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
     </style>
 </head>
@@ -62,12 +68,14 @@
         let isBroadcasting = false;
         let folderHandle = null;
         
-        let unprocessedFinalText = "";
+        let globalFinalText = "";
+        let processedLength = 0;
+        let unprocessedText = "";
         let currentSentenceId = Date.now();
         let lastSpeechTime = Date.now();
         let silenceTimer = null;
         
-        // 💡 렉 방지용 트래픽 제어 변수 (부하 차단)
+        // 네트워크 과부하 방지 타이머
         let lastLivePushTime = 0;
 
         async function connectLocalFolder() {
@@ -88,33 +96,6 @@
             } catch (error) {}
         }
 
-        // 💡 억지로 자르는 코드를 삭제하고, 문맥이 끊기지 않는 '안전한 절단'만 남겼습니다.
-        function findCutMatch(text) {
-            // 1순위: 확실한 문장 끝맺음말
-            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|었다|았다|했다|인다|이다)(\s|[.,?!]|$)/g;
-            let execResult;
-            
-            while ((execResult = regexEnd.exec(text)) !== null) {
-                if (execResult.index >= 10) return execResult;
-            }
-            
-            // 2순위: 문장이 길어질 때 (50자 초과) 안전한 연결어미에서만 분할
-            if (text.length > 50) {
-                let regexClause = /(고|며|는데|지만|면서|니까|어서|아서|으니|도록|하며|하고)(\s)/g;
-                let match = null;
-                while ((execResult = regexClause.exec(text)) !== null) {
-                    if (execResult.index >= 20) {
-                        match = execResult;
-                        if (execResult.index > 80) break; // 80자 이전의 가장 안전한 어미 선택
-                    }
-                }
-                if (match) return match;
-            }
-            
-            // 끝맺음이나 연결어미가 없으면 절대 억지로 강제 절단하지 않고 그대로 대기합니다. (문장 손실 완벽 방지)
-            return null;
-        }
-
         if (!('webkitSpeechRecognition' in window)) {
             alert("구글 크롬을 사용해 주십시오.");
         } else {
@@ -125,52 +106,69 @@
 
             recognition.onstart = function() {
                 const rt = document.getElementById('realtimeText');
-                rt.innerText = "🟢 마이크 준비 완료! (말씀을 시작해 주세요)";
+                rt.innerText = "🟢 마이크 준비 완료!";
                 rt.style.color = "#4CAF50";
             };
 
             recognition.onresult = function(event) {
                 lastSpeechTime = Date.now();
-                let interimText = "";
+                let currentInterim = "";
 
                 document.getElementById('realtimeText').style.color = "#ffeb3b";
 
                 for (let i = event.resultIndex; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
-                        unprocessedFinalText += event.results[i][0].transcript;
+                        globalFinalText += event.results[i][0].transcript;
                     } else {
-                        interimText += event.results[i][0].transcript;
+                        currentInterim += event.results[i][0].transcript;
                     }
                 }
 
-                let liveText = (unprocessedFinalText + interimText).trim();
-                
+                let totalText = globalFinalText + currentInterim;
+                unprocessedText = totalText.substring(processedLength);
+
+                let liveText = unprocessedText.trim();
                 if (liveText) {
-                    document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
+                    // 💡 화면 텍스트 증식 방지: 최신 60자만 화면에 표시하여 1~2줄 유지
+                    let displayLiveText = liveText.length > 60 ? liveText.substring(liveText.length - 60) : liveText;
+                    document.getElementById('realtimeText').innerText = `듣는 중: ${displayLiveText}`;
                     
-                    // 💡 컴퓨터 부하 방지: 0.4초(400ms)에 한 번만 서버로 전송합니다.
-                    if (Date.now() - lastLivePushTime > 400) {
+                    // 💡 버퍼링 방지 (0.2초 간격 송출) 및 ... 표시 완전 삭제
+                    if (Date.now() - lastLivePushTime > 200) {
                         lastLivePushTime = Date.now();
-                        
                         fetch(FIREBASE_URL, {
                             method: "PATCH",
                             body: JSON.stringify({
                                 _timestamp: Date.now(),
-                                ko: { text: liveText + "...", id: currentSentenceId }
+                                ko: { text: liveText, id: currentSentenceId } // 점(.) 3개 절대 안 붙음
                             })
                         }).catch(e => {});
-                        
                         saveTextToFile('temp_live.txt', liveText);
                     }
                 }
 
-                let match = findCutMatch(unprocessedFinalText);
+                // 절단 조건 1: 종결 어미 (최소 15자 이상일 때만)
+                let regex = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|[요다까나])(\s|[.,?!]|$)/g;
+                let match = null;
+                let execResult;
+                
+                while ((execResult = regex.exec(unprocessedText)) !== null) {
+                    if (execResult.index >= 15) { match = execResult; break; }
+                }
+
+                // 절단 조건 2: 너무 긴 문장 방지 (45자 초과 시 띄어쓰기에서 부드럽게 컷)
+                if (!match && unprocessedText.length > 45) {
+                    let lastSpace = unprocessedText.lastIndexOf(" ", 40);
+                    if (lastSpace > 15) match = { index: lastSpace, 0: " " };
+                    else match = { index: 45, 0: "" };
+                }
                 
                 while (match) {
                     let cutIndex = match.index + match[0].length;
-                    let sentenceToProcess = unprocessedFinalText.substring(0, cutIndex).trim();
+                    let sentenceToProcess = unprocessedText.substring(0, cutIndex).trim();
                     
-                    unprocessedFinalText = unprocessedFinalText.substring(cutIndex);
+                    processedLength += cutIndex;
+                    unprocessedText = totalText.substring(processedLength);
                     
                     let idToProcess = currentSentenceId;
                     currentSentenceId = Date.now();
@@ -180,7 +178,18 @@
                         processOpenAITranslation(sentenceToProcess, idToProcess);
                     }
                     
-                    match = findCutMatch(unprocessedFinalText);
+                    match = null;
+                    regex.lastIndex = 0;
+                    
+                    while ((execResult = regex.exec(unprocessedText)) !== null) {
+                        if (execResult.index >= 15) { match = execResult; break; }
+                    }
+
+                    if (!match && unprocessedText.length > 45) {
+                        let lastSpace = unprocessedText.lastIndexOf(" ", 40);
+                        if (lastSpace > 15) match = { index: lastSpace, 0: " " };
+                        else match = { index: 45, 0: "" };
+                    }
                 }
             };
 
@@ -229,18 +238,17 @@
 
         async function processOpenAITranslation(koreanText, msgId) {
             if (!OPENAI_API_KEY) {
-                appendLogMessage(koreanText, msgId, true, "<span style='color:red;'>[오류] 상단에 API 키를 먼저 입력하고 저장해 주세요.</span>");
+                appendLogMessage(koreanText, msgId, true, "<span style='color:red;'>[오류] API 키를 입력해 주세요.</span>");
                 return;
             }
 
-            // 💡 생략 및 원문 훼손을 방지하는 강력한 지시어 복구
             const prompt = `
 너는 기독교 예배 설교를 전담하는 최고 수준의 동시통역사야.
 다음 목사님의 설교 발화를 읽고:
-1) 한국어 오탈자와 띄어쓰기를 문맥에 맞게 다듬어 교정해. 이때 설교에 어울리는 은혜로운 어휘와 존댓말을 살려야 해.
+1) 한국어 오탈자와 띄어쓰기를 문맥에 맞게 다듬어 교정해.
 2) 나머지 7개 언어로 자연스럽고 영적인 울림이 있도록 번역해.
-3) [가장 중요] 목사님이 하신 말씀 속의 단어, 표현, 접속사를 절대 임의로 빼거나 삭제하지 마. 원문에 있는 단어는 100% 모두 포함하여 번역해.
-4) 내용을 임의로 요약하거나 중간을 생략(중략)하지 마.
+3) 원문에 있는 단어를 임의로 빼거나 삭제하지 말고 모두 포함해.
+4) 문장이 미완성인 것처럼 보이더라도 임의로 요약하거나 끝에 '...' 등을 붙이지 마.
 
 반드시 아래 JSON 형식으로만 응답해:
 {
@@ -268,14 +276,14 @@
                         model: "gpt-4o",
                         messages: [{ role: "user", content: prompt }],
                         response_format: { type: "json_object" },
-                        temperature: 0.1
+                        temperature: 0.1 // 정확도 및 원문 사수 극대화
                     })
                 });
 
                 const data = await response.json();
                 
                 if (data.error) {
-                    appendLogMessage(koreanText, msgId, true, `<span style='color:red;'>[OpenAI 오류] ${data.error.message}</span>`);
+                    appendLogMessage(koreanText, msgId, true, `<span style='color:red;'>[오류] ${data.error.message}</span>`);
                     return;
                 }
 
@@ -294,35 +302,31 @@
 
                 fetch(FIREBASE_URL, { method: "PATCH", body: JSON.stringify(translationPayload) }).catch(e => {});
 
-            } catch (error) {
-                console.error("OpenAI 통역 오류:", error);
-            }
+            } catch (error) {}
         }
 
         function startBroadcast() {
             if (!OPENAI_API_KEY) {
-                alert("위에 OpenAI API 키를 먼저 입력하고 [내 PC에 저장] 버튼을 눌러주세요!");
+                alert("API 키를 먼저 입력하고 저장해주세요!");
                 return;
             }
             
-            isBroadcasting = true; unprocessedFinalText = ""; currentSentenceId = Date.now();
-            
-            const rt = document.getElementById('realtimeText');
-            rt.innerText = "⏳ 마이크 서버에 연결 중입니다...";
-            rt.style.color = "#FF9800";
+            isBroadcasting = true; globalFinalText = ""; processedLength = 0; unprocessedText = ""; currentSentenceId = Date.now();
+            lastLivePushTime = 0;
             
             recognition.start();
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'inline-block';
 
-            // 💡 침묵 감지: 3.5초 이상 말씀을 멈추셨을 때만 남아있는 문장을 부드럽게 털어냅니다.
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
-
-                    if (silenceDuration > 3500 && unprocessedFinalText.trim().length > 0) {
-                        let sentenceToProcess = unprocessedFinalText.trim();
-                        unprocessedFinalText = "";
+                    
+                    // 침묵이 3초 이상 길어지면 남은 잔여 텍스트 강제 처리
+                    if (silenceDuration > 3000 && unprocessedText.trim().length > 0) {
+                        let sentenceToProcess = unprocessedText.trim();
+                        processedLength += unprocessedText.length;
+                        unprocessedText = "";
                         
                         let idToProcess = currentSentenceId;
                         currentSentenceId = Date.now();
