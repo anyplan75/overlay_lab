@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (원래 버전 복구)</title>
+    <title>예배 자막 송출기 (완벽 복구 및 맥락 보존형)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -133,6 +133,7 @@
                     saveTextToFile('temp_live.txt', liveText);
                 }
 
+                // 💡 맥락이 온전하게 끝나는 확실한 종결어미 기준 (설교 호흡 반영)
                 let regex = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|[요다까나])(\s|[.,?!]|$)/g;
                 let match = null;
                 let execResult;
@@ -141,10 +142,10 @@
                     if (execResult.index >= 15) { match = execResult; break; }
                 }
 
-                if (!match && unprocessedText.length > 80) {
-                    let lastSpace = unprocessedText.lastIndexOf(" ", 80);
+                if (!match && unprocessedText.length > 90) {
+                    let lastSpace = unprocessedText.lastIndexOf(" ", 90);
                     if (lastSpace > 20) match = { index: lastSpace, 0: " " };
-                    else match = { index: 80, 0: "" };
+                    else match = { index: 90, 0: "" };
                 }
                 
                 while (match) {
@@ -169,10 +170,10 @@
                         if (execResult.index >= 15) { match = execResult; break; }
                     }
                     
-                    if (!match && unprocessedText.length > 80) {
-                        let lastSpace = unprocessedText.lastIndexOf(" ", 80);
+                    if (!match && unprocessedText.length > 90) {
+                        let lastSpace = unprocessedText.lastIndexOf(" ", 90);
                         if (lastSpace > 20) match = { index: lastSpace, 0: " " };
-                        else match = { index: 80, 0: "" };
+                        else match = { index: 90, 0: "" };
                     }
                 }
             };
@@ -226,12 +227,14 @@
                 return;
             }
 
+            // 💡 원문 단어(접속사, 표현 등)를 절대 유실하지 않도록 엄격하게 고정된 프롬프트
             const prompt = `
 너는 기독교 예배 설교를 전담하는 최고 수준의 동시통역사야.
 다음 목사님의 설교 발화를 읽고:
 1) 한국어 오탈자와 띄어쓰기를 문맥에 맞게 다듬어 교정해.
 2) 나머지 7개 언어로 자연스럽고 영적인 울림이 있도록 번역해.
-3) 원문에 있는 단어를 임의로 빼거나 삭제하지 말고 모두 포함해.
+3) [원문 보존 철저] 원문에 있는 단어, 표현, 접속사(예: "또 하나" 등)를 절대 임의로 빼거나 삭제하지 말고 100% 모두 포함해.
+4) 요약이나 중략을 절대 하지 마.
 
 반드시 아래 JSON 형식으로만 응답해:
 {
@@ -259,7 +262,7 @@
                         model: "gpt-4o",
                         messages: [{ role: "user", content: prompt }],
                         response_format: { type: "json_object" },
-                        temperature: 0.2
+                        temperature: 0.1
                     })
                 });
 
