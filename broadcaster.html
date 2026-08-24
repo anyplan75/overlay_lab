@@ -2,9 +2,8 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (실시간 원문 + AI 덮어쓰기)</title>
+    <title>예배 자막 송출기 (안전 저장 모드)</title>
     
-    <!-- 💡 독립 데스크톱/모바일 앱 실행 메타 태그 -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="mobile-web-app-capable" content="yes">
@@ -12,19 +11,27 @@
 
     <style>
         body { font-family: 'Malgun Gothic', sans-serif; background: #1e1e1e; color: white; padding: 20px; margin: 0; user-select: none; }
-        h1 { color: #4CAF50; text-align: center; }
+        h1 { color: #4CAF50; text-align: center; margin-bottom: 10px; }
         .btn { padding: 15px 30px; font-size: 18px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; margin: 10px; }
         #folderBtn { background-color: #FF9800; color: white; }
         #startBtn { background-color: #f44336; color: white; display: none; }
         #stopBtn { background-color: #2196F3; color: white; display: none; }
         #realtimeText { background: #333; color: #ffeb3b; padding: 15px; border-radius: 8px; font-size: 22px; margin-top: 20px; font-weight: bold; text-align: center; }
+        .key-container { background: #2c3e50; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
     </style>
 </head>
 <body>
 
     <h1>🎙️ 실시간 다중 송출 및 파일 저장 시스템</h1>
-    <p style="text-align: center; color:#aaa;">1단계: 아이클라우드 폴더 연결 <br>2단계: 방송 시작</p>
     
+    <!-- 💡 API 키를 화면에서 직접 입력받아 내 PC에만 저장하는 영역 -->
+    <div class="key-container">
+        <label for="apiKeyInput" style="font-weight: bold; font-size: 18px; margin-right: 10px;">🔑 OpenAI API 키:</label>
+        <input type="password" id="apiKeyInput" placeholder="sk-proj-..." style="padding: 10px; font-size: 16px; width: 300px; border-radius: 5px; border: none;">
+        <button class="btn" style="padding: 10px 20px; font-size: 16px; margin: 0 0 0 10px; background: #3498db;" onclick="saveApiKey()">내 PC에 저장</button>
+        <p style="font-size: 13px; color: #bdc3c7; margin-top: 10px;">* 한 번만 저장하면 브라우저가 기억합니다. (깃허브 코드에는 절대 올라가지 않아 안전합니다)</p>
+    </div>
+
     <div style="text-align: center;">
         <button id="folderBtn" class="btn" onclick="connectLocalFolder()">📁 저장 폴더 연결하기</button>
         <button id="startBtn" class="btn" onclick="startBroadcast()">🔴 방송 시작</button>
@@ -36,11 +43,23 @@
     <div id="logBox" style="background: #111; padding: 20px; border-radius: 8px; height: 500px; overflow-y: auto; margin-top: 20px; text-align: left; line-height: 1.8;"></div>
 
     <script>
-        // 💡 발급받으신 OpenAI API 키를 여기에 넣으세요
-        const OPENAI_API_KEY = "";
-        
         const FIREBASE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/subtitles.json";
         
+        // 💡 저장된 API 키 불러오기
+        let OPENAI_API_KEY = localStorage.getItem('saved_openai_key') || "";
+        document.getElementById('apiKeyInput').value = OPENAI_API_KEY;
+
+        function saveApiKey() {
+            const inputKey = document.getElementById('apiKeyInput').value.trim();
+            if (inputKey.startsWith("sk-")) {
+                OPENAI_API_KEY = inputKey;
+                localStorage.setItem('saved_openai_key', OPENAI_API_KEY);
+                alert("✅ 키가 브라우저에 안전하게 저장되었습니다! 이제 방송을 시작하셔도 됩니다.");
+            } else {
+                alert("❌ 올바른 OpenAI API 키 형식이 아닙니다. (sk- 로 시작해야 합니다)");
+            }
+        }
+
         let recognition;
         let isBroadcasting = false;
         let folderHandle = null;
@@ -98,7 +117,6 @@
                 if (liveText) {
                     document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
                     
-                    // 💡 [변경 1] 한국어는 듣는 즉시 화면에 띄우도록 실시간 송출 (추후 교정본으로 덮어씌워짐)
                     fetch(FIREBASE_URL, {
                         method: "PATCH",
                         body: JSON.stringify({
@@ -133,7 +151,6 @@
                     fullSermonText += sentenceToProcess + " ";
                     
                     let idToProcess = currentSentenceId;
-                    // 💡 한 문장이 끝났으므로 다음 문장을 위해 새 ID 발급
                     currentSentenceId = Date.now();
                     
                     if (sentenceToProcess.length > 0) {
@@ -199,8 +216,12 @@
             box.scrollTop = box.scrollHeight;
         }
 
-        // 💡 [변경 2] 기독교 설교에 맞는 엄격한 프롬프트 적용
         async function processOpenAITranslation(koreanText, msgId) {
+            if (!OPENAI_API_KEY) {
+                appendLogMessage(koreanText, msgId, true, "<span style='color:red;'>[오류] 상단에 API 키를 먼저 입력하고 저장해 주세요.</span>");
+                return;
+            }
+
             const prompt = `
 너는 기독교 예배 설교를 전담하는 최고 수준의 동시통역사야.
 다음 목사님의 설교 발화를 읽고:
@@ -233,11 +254,17 @@
                         model: "gpt-4o",
                         messages: [{ role: "user", content: prompt }],
                         response_format: { type: "json_object" },
-                        temperature: 0.2 // 지나친 창작을 막기 위해 온도를 낮춤
+                        temperature: 0.2
                     })
                 });
 
                 const data = await response.json();
+                
+                if (data.error) {
+                    appendLogMessage(koreanText, msgId, true, `<span style='color:red;'>[OpenAI 오류] ${data.error.message}</span>`);
+                    return;
+                }
+
                 const result = JSON.parse(data.choices[0].message.content);
 
                 let highlightedHtml = highlightDifferences(koreanText, result.ko);
@@ -247,7 +274,6 @@
                 ['ko', 'en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'].forEach(lang => {
                     if (result[lang]) {
                         saveTextToFile(`${lang}.txt`, result[lang]);
-                        // 💡 이미 송출된 기존 msgId에 교정본과 번역본을 덮어씌웁니다.
                         translationPayload[lang] = { text: result[lang], id: msgId };
                     }
                 });
@@ -260,6 +286,11 @@
         }
 
         function startBroadcast() {
+            if (!OPENAI_API_KEY) {
+                alert("위에 OpenAI API 키를 먼저 입력하고 [내 PC에 저장] 버튼을 눌러주세요!");
+                return;
+            }
+            
             isBroadcasting = true; fullSermonText = ""; globalFinalText = ""; processedLength = 0; unprocessedText = ""; currentSentenceId = Date.now();
             recognition.start();
             document.getElementById('startBtn').style.display = 'none';
