@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (완벽 복구 및 맥락 보존형)</title>
+    <title>예배 자막 송출기 (맥락 보존 및 실시간 덮어쓰기 완결판)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -68,6 +68,7 @@
         let currentSentenceId = Date.now();
         let lastSpeechTime = Date.now();
         let silenceTimer = null;
+        let lastLivePushTime = 0;
 
         async function connectLocalFolder() {
             try {
@@ -85,6 +86,37 @@
                 await writable.write(content);
                 await writable.close();
             } catch (error) {}
+        }
+
+        // 💡 핵심 튜닝: 문맥 기반 스마트 절단기 (단순 글자 수나 엉터리 조건 폐기)
+        function findCutMatch(text) {
+            // 1순위: 문장이 온전히 끝나는 확실한 종결어미 (최소 10글자 이상일 때만 발동하여 엉뚱한 절단 방지)
+            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|겠습니다|겠지만|입니다|입니까)(\s|[.,?!]|$)/g;
+            let execResult;
+            
+            while ((execResult = regexEnd.exec(text)) !== null) {
+                if (execResult.index >= 10) return execResult;
+            }
+            
+            // 2순위: 말이 끝나지 않고 이어져서 70자가 넘어가면, 가독성을 위해 의미가 이어지는 '연결 어미'에서 부드럽게 절단
+            if (text.length > 70) {
+                let regexClause = /(고|며|는데|지만|면서|니까|어서|아서|으니|도록|하며|하고)(\s)/g;
+                let match = null;
+                while ((execResult = regexClause.exec(text)) !== null) {
+                    if (execResult.index >= 30) {
+                        match = execResult;
+                        if (execResult.index > 90) break; // 너무 뒤로 밀리기 전에 자름
+                    }
+                }
+                if (match) return match;
+                
+                // 3순위: 연결어미도 없이 100자가 넘어가면 그제야 어쩔 수 없이 띄어쓰기에서 안전 절단
+                if (text.length > 100) {
+                    let lastSpace = text.lastIndexOf(" ", 95);
+                    if (lastSpace > 30) return { index: lastSpace, 0: " " };
+                }
+            }
+            return null;
         }
 
         if (!('webkitSpeechRecognition' in window)) {
@@ -122,31 +154,23 @@
                 if (liveText) {
                     document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
                     
-                    fetch(FIREBASE_URL, {
-                        method: "PATCH",
-                        body: JSON.stringify({
-                            _timestamp: Date.now(),
-                            ko: { text: liveText + "...", id: currentSentenceId }
-                        })
-                    }).catch(e => {});
-                    
-                    saveTextToFile('temp_live.txt', liveText);
+                    // 💡 실시간 수신기에 0.25초 간격으로 쏘아 데이터 병목 현상을 막고,
+                    // isFinal: false 꼬리표를 달아 화면에 흐린 회색 텍스트로 즉각 표시되도록 지시합니다.
+                    if (Date.now() - lastLivePushTime > 250) {
+                        lastLivePushTime = Date.now();
+                        fetch(FIREBASE_URL, {
+                            method: "PATCH",
+                            body: JSON.stringify({
+                                _timestamp: Date.now(),
+                                ko: { text: liveText + "...", id: currentSentenceId, isFinal: false }
+                            })
+                        }).catch(e => {});
+                        saveTextToFile('temp_live.txt', liveText);
+                    }
                 }
 
-                // 💡 맥락이 온전하게 끝나는 확실한 종결어미 기준 (설교 호흡 반영)
-                let regex = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|[요다까나])(\s|[.,?!]|$)/g;
-                let match = null;
-                let execResult;
-                
-                while ((execResult = regex.exec(unprocessedText)) !== null) {
-                    if (execResult.index >= 15) { match = execResult; break; }
-                }
-
-                if (!match && unprocessedText.length > 90) {
-                    let lastSpace = unprocessedText.lastIndexOf(" ", 90);
-                    if (lastSpace > 20) match = { index: lastSpace, 0: " " };
-                    else match = { index: 90, 0: "" };
-                }
+                // 새로운 스마트 분할 함수 적용
+                let match = findCutMatch(unprocessedText);
                 
                 while (match) {
                     let cutIndex = match.index + match[0].length;
@@ -163,18 +187,7 @@
                         processOpenAITranslation(sentenceToProcess, idToProcess);
                     }
                     
-                    match = null;
-                    regex.lastIndex = 0;
-                    
-                    while ((execResult = regex.exec(unprocessedText)) !== null) {
-                        if (execResult.index >= 15) { match = execResult; break; }
-                    }
-                    
-                    if (!match && unprocessedText.length > 90) {
-                        let lastSpace = unprocessedText.lastIndexOf(" ", 90);
-                        if (lastSpace > 20) match = { index: lastSpace, 0: " " };
-                        else match = { index: 90, 0: "" };
-                    }
+                    match = findCutMatch(unprocessedText);
                 }
             };
 
@@ -227,7 +240,7 @@
                 return;
             }
 
-            // 💡 원문 단어(접속사, 표현 등)를 절대 유실하지 않도록 엄격하게 고정된 프롬프트
+            // 💡 "또 하나" 등 사소한 단어도 절대 유실되지 않도록 철저히 고정된 프롬프트
             const prompt = `
 너는 기독교 예배 설교를 전담하는 최고 수준의 동시통역사야.
 다음 목사님의 설교 발화를 읽고:
@@ -279,7 +292,14 @@
                 appendLogMessage(koreanText, msgId, true, highlightedHtml);
 
                 let translationPayload = { _timestamp: Date.now() };
-                ['ko', 'en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'].forEach(lang => {
+                
+                // 💡 AI 교정이 완료되면 isFinal: true 꼬리표를 달아 전송하여, 회색 임시 텍스트를 흰색 최종본으로 덮어씌웁니다.
+                if (result.ko) {
+                    saveTextToFile('ko.txt', result.ko);
+                    translationPayload.ko = { text: result.ko, id: msgId, isFinal: true };
+                }
+                
+                ['en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'].forEach(lang => {
                     if (result[lang]) {
                         saveTextToFile(`${lang}.txt`, result[lang]);
                         translationPayload[lang] = { text: result[lang], id: msgId };
@@ -305,6 +325,7 @@
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
+                    // 목사님이 4.5초 이상 말씀을 멈추시면 남아있는 텍스트를 모두 전송
                     if (silenceDuration > 4500 && unprocessedText.trim().length > 0) {
                         let sentenceToProcess = unprocessedText.trim();
                         processedLength += unprocessedText.length;
