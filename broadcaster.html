@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (무중단 연속 듣기 및 즉시 분할)</title>
+    <title>예배 자막 송출기 (실시간 즉시 분할 엔진)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -67,8 +67,9 @@
         let isBroadcasting = false;
         let folderHandle = null;
         
-        // 💡 형님이 말씀하신 '임시 보관함(버퍼)' 역할을 하는 핵심 변수입니다.
-        let unprocessedFinalText = "";
+        // 💡 핵심: 구글 엔진의 상태와 상관없이 '내가 지금까지 처리한 글자 수'만 추적합니다.
+        let totalProcessedLength = 0;
+        let globalUnprocessedText = "";
         let currentSentenceId = Date.now();
         let lastSpeechTime = Date.now();
         let silenceTimer = null;
@@ -92,25 +93,34 @@
             } catch (error) {}
         }
 
-        // 💡 형님의 황금비율 공식 그대로 구현
+        // 💡 실시간 방어선: 구글이 판단을 미루더라도 여기서 강제로 낚아챕니다.
         function findCutMatch(text) {
-            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|거늘|시니|느냐|도다|었다|았다|했다|인다|이다)(\s|[.,?!]|$)/g;
+            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|거늘|시니|느냐|도다|입니까|입니다)(\s|[.,?!]|$)/g;
             let execResult;
-
+            
             while ((execResult = regexEnd.exec(text)) !== null) {
-                // 6글자 이상 40글자 이내일 때 끝맺음말에서 절단
-                if (execResult.index >= 5 && execResult.index <= 40) {
-                    return execResult;
+                if (execResult.index >= 5) return execResult; // 짧아도 종결어미면 무조건 즉시 컷
+            }
+
+            if (text.length >= 35) {
+                let regexClause = /(고|며|는데|지만|면서|니까|어서|아서|으니|도록|하며|하고)(\s)/g;
+                let match = null;
+                while ((execResult = regexClause.exec(text)) !== null) {
+                    if (execResult.index >= 15) {
+                        match = execResult;
+                        if (execResult.index > 45) break;
+                    }
+                }
+                if (match) return match;
+                
+                // 종결어미도, 연결어미도 없는데 50자가 넘어가면 띄어쓰기에서 무조건 싹둑!
+                if (text.length >= 50) {
+                    let lastSpace = text.lastIndexOf(" ", 50);
+                    if (lastSpace > 15) return { index: lastSpace, 0: " " };
+                    return { index: 50, 0: "" };
                 }
             }
-
-            // 끝맺음말이 없더라도 40글자가 넘어가면 무조건 강제 절단
-            if (text.length > 40) {
-                let lastSpace = text.lastIndexOf(" ", 40);
-                if (lastSpace > 10) return { index: lastSpace, 0: " " };
-                return { index: 40, 0: "" };
-            }
-
+            
             return null;
         }
 
@@ -123,6 +133,7 @@
             recognition.lang = 'ko-KR';
 
             recognition.onstart = function() {
+                totalProcessedLength = 0; // 마이크 켤 때마다 추적기 초기화
                 const rt = document.getElementById('realtimeText');
                 rt.innerText = "🟢 마이크 준비 완료!";
                 rt.style.color = "#4CAF50";
@@ -130,28 +141,23 @@
 
             recognition.onresult = function(event) {
                 lastSpeechTime = Date.now();
-                let interimText = "";
-
                 document.getElementById('realtimeText').style.color = "#ffeb3b";
 
-                // 1. 마이크로 들어온 글자를 무조건 '임시 보관함'에 계속 담습니다. (마이크 멈춤 없음)
-                for (let i = event.resultIndex; i < event.results.length; ++i) {
-                    if (event.results[i].isFinal) {
-                        unprocessedFinalText += event.results[i][0].transcript;
-                    } else {
-                        interimText += event.results[i][0].transcript;
-                    }
+                // 💡 확정/미확정 구분 없이 마이크로 들어온 '모든 글자'를 하나로 합칩니다.
+                let totalText = "";
+                for (let i = 0; i < event.results.length; ++i) {
+                    totalText += event.results[i][0].transcript;
                 }
 
-                let liveText = (unprocessedFinalText + interimText).trim();
+                // 이미 AI로 넘긴 글자 수만큼 잘라내어 '순수하게 새로 들어온 글자'만 뽑아냅니다.
+                let unprocessedText = totalText.substring(totalProcessedLength);
+                let liveText = unprocessedText.trim();
                 
                 if (liveText) {
-                    let displayLiveText = liveText.length > 70 ? "..." + liveText.substring(liveText.length - 70) : liveText;
-                    document.getElementById('realtimeText').innerText = `듣는 중: ${displayLiveText}`;
+                    document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
                     
                     if (Date.now() - lastLivePushTime > 200) {
                         lastLivePushTime = Date.now();
-                        
                         fetch(FIREBASE_URL, {
                             method: "PATCH",
                             body: JSON.stringify({
@@ -159,22 +165,21 @@
                                 ko: { text: liveText, id: currentSentenceId }
                             })
                         }).catch(e => {});
-                        
                         saveTextToFile('temp_live.txt', liveText);
                     }
+                } else {
+                    document.getElementById('realtimeText').innerText = `듣는 중: ...`;
                 }
 
-                // 2. 💡 마이크는 백그라운드에서 계속 듣게 놔두고, 임시 보관함에 조건이 만족된 글자가 있는지 실시간으로 검사해서 앞부분만 쓱쓱 썰어냅니다.
-                let match = findCutMatch(unprocessedFinalText);
+                // 뽑아낸 글자가 절단 조건에 맞으면 실시간으로 즉시 잘라서 AI로 넘깁니다.
+                let match = findCutMatch(unprocessedText);
                 
                 while (match) {
                     let cutIndex = match.index + match[0].length;
+                    let sentenceToProcess = unprocessedText.substring(0, cutIndex).trim();
                     
-                    // 조건이 맞은 분량만큼만 빼냅니다.
-                    let sentenceToProcess = unprocessedFinalText.substring(0, cutIndex).trim();
-                    
-                    // 남은 텍스트는 다시 보관함에 둡니다. (마이크는 계속 켜져 있어서 끊기지 않음)
-                    unprocessedFinalText = unprocessedFinalText.substring(cutIndex);
+                    totalProcessedLength += cutIndex; // 처리한 만큼 글자 수를 누적
+                    unprocessedText = totalText.substring(totalProcessedLength);
                     
                     let idToProcess = currentSentenceId;
                     currentSentenceId = Date.now();
@@ -184,8 +189,10 @@
                         processOpenAITranslation(sentenceToProcess, idToProcess);
                     }
                     
-                    match = findCutMatch(unprocessedFinalText);
+                    match = findCutMatch(unprocessedText);
                 }
+
+                globalUnprocessedText = unprocessedText; // 타이머 처리를 위해 저장
             };
 
             recognition.onend = function() {
@@ -306,25 +313,29 @@
                 return;
             }
             
-            isBroadcasting = true; unprocessedFinalText = ""; currentSentenceId = Date.now();
+            isBroadcasting = true; totalProcessedLength = 0; globalUnprocessedText = ""; currentSentenceId = Date.now();
             recognition.start();
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'inline-block';
 
+            // 말씀을 쉬실 때 남아있는 잔여 글자를 처리하는 타이머
             silenceTimer = setInterval(() => {
                 if (isBroadcasting) {
                     let silenceDuration = Date.now() - lastSpeechTime;
                     
-                    // 목사님이 숨을 고르실 때(1.5초) 보관함에 자투리가 남아있으면 탁 털어줍니다.
-                    if (silenceDuration > 1500 && unprocessedFinalText.trim().length > 0) {
-                        let sentenceToProcess = unprocessedFinalText.trim();
-                        unprocessedFinalText = "";
+                    if (silenceDuration > 1500 && globalUnprocessedText.trim().length > 0) {
+                        let sentenceToProcess = globalUnprocessedText.trim();
+                        totalProcessedLength += globalUnprocessedText.length;
+                        globalUnprocessedText = "";
                         
                         let idToProcess = currentSentenceId;
                         currentSentenceId = Date.now();
                         
                         appendLogMessage(sentenceToProcess, idToProcess, false);
                         processOpenAITranslation(sentenceToProcess, idToProcess);
+                        
+                        // 화면 찌꺼기 완벽 제거
+                        document.getElementById('realtimeText').innerText = `듣는 중: ...`;
                     }
                 }
             }, 500);
