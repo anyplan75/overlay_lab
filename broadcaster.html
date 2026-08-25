@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>예배 자막 송출기 (실시간 모드 스위치 추가)</title>
+    <title>예배 자막 송출기 (날짜별 자동 폴더 & 전문 저장 완료본)</title>
     
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -24,7 +24,7 @@
         }
         .key-container { background: #2c3e50; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
         
-        /* 💡 스위치 토글 디자인 */
+        /* 스위치 토글 디자인 */
         .switch-container { background: #34495e; padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 15px; display: inline-block; }
         .switch { position: relative; display: inline-block; width: 60px; height: 34px; vertical-align: middle; margin-left: 10px; }
         .switch input { opacity: 0; width: 0; height: 0; }
@@ -45,7 +45,7 @@
         <p style="font-size: 13px; color: #bdc3c7; margin-top: 10px;">* 한 번만 저장하면 브라우저가 기억합니다. (깃허브 코드에는 절대 올라가지 않아 안전합니다)</p>
     </div>
 
-    <!-- 💡 실시간 덮어쓰기 모드 ON/OFF 스위치 -->
+    <!-- 실시간 덮어쓰기 모드 ON/OFF 스위치 -->
     <div style="text-align: center;">
         <div class="switch-container">
             <span style="font-weight: bold; font-size: 16px;">⚡ 실시간 덮어쓰기 모드 (Live Preview):</span>
@@ -85,7 +85,10 @@
 
         let recognition;
         let isBroadcasting = false;
-        let folderHandle = null;
+        
+        // 💡 폴더 관리를 위한 변수들 추가
+        let rootFolderHandle = null;
+        let sessionFolderHandle = null;
         
         let totalProcessedLength = 0;
         let globalUnprocessedText = "";
@@ -94,18 +97,26 @@
         let silenceTimer = null;
         let lastLivePushTime = 0;
 
+        // 💡 전체 설교 전문을 담을 언어별 바구니
+        let sessionFullTexts = {
+            'ko': [], 'en': [], 'zh-CN': [], 'vi': [], 'id': [], 'ne': [], 'tl': [], 'ru': []
+        };
+
+        // 1. 최상위 저장 폴더 연결
         async function connectLocalFolder() {
             try {
-                folderHandle = await window.showDirectoryPicker();
+                rootFolderHandle = await window.showDirectoryPicker();
                 document.getElementById('folderBtn').style.display = 'none';
                 document.getElementById('startBtn').style.display = 'inline-block';
+                alert("✅ 저장 폴더가 연결되었습니다! [방송 시작]을 누르면 오늘 날짜/시간으로 하위 폴더가 자동 생성됩니다.");
             } catch (error) {}
         }
 
+        // 2. 파일 덮어쓰기 (실시간 송출용 - 생성된 하위 폴더에 저장)
         async function saveTextToFile(filename, content) {
-            if (!folderHandle) return;
+            if (!sessionFolderHandle) return;
             try {
-                const fileHandle = await folderHandle.getFileHandle(filename, { create: true });
+                const fileHandle = await sessionFolderHandle.getFileHandle(filename, { create: true });
                 const writable = await fileHandle.createWritable();
                 await writable.write(content);
                 await writable.close();
@@ -151,6 +162,9 @@
 
             recognition.onstart = function() {
                 totalProcessedLength = 0;
+                // 마이크 켤 때마다 전체 바구니 초기화
+                Object.keys(sessionFullTexts).forEach(lang => sessionFullTexts[lang] = []);
+                
                 const rt = document.getElementById('realtimeText');
                 rt.innerText = "🟢 마이크 준비 완료!";
                 rt.style.color = "#4CAF50";
@@ -173,7 +187,6 @@
                     let cutIndex = match.index + match[0].length;
                     let sentenceToProcess = unprocessedText.substring(0, cutIndex).trim();
                     
-                    // 💡 스위치가 켜져 있을 때만 문장이 잘릴 때 임시 원문을 실시간 송출합니다.
                     const isLiveOn = document.getElementById('liveToggle').checked;
                     if (isLiveOn) {
                         fetch(FIREBASE_URL, {
@@ -206,7 +219,6 @@
                     let displayLiveText = liveText.length > 70 ? "..." + liveText.substring(liveText.length - 70) : liveText;
                     document.getElementById('realtimeText').innerText = `듣는 중: ${displayLiveText}`;
                     
-                    // 💡 스위치가 켜져 있을 때만 타이핑되는 중간 과정을 실시간으로 수신기에 쏩니다. (꺼져 있으면 AI 교정본이 뜰 때까지 화면이 조용합니다)
                     if (isLiveOn && Date.now() - lastLivePushTime > 200) {
                         lastLivePushTime = Date.now();
                         fetch(FIREBASE_URL, {
@@ -328,7 +340,13 @@
                 let translationPayload = { _timestamp: Date.now() };
                 ['ko', 'en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'].forEach(lang => {
                     if (result[lang]) {
+                        // 1. 개별 파일 덮어쓰기 (실시간 자막 송출용)
                         saveTextToFile(`${lang}.txt`, result[lang]);
+                        
+                        // 2. 💡 전체 설교 본문을 바구니에 차곡차곡 누적
+                        if (!sessionFullTexts[lang]) sessionFullTexts[lang] = [];
+                        sessionFullTexts[lang].push(result[lang]);
+
                         translationPayload[lang] = { text: result[lang], id: msgId };
                     }
                 });
@@ -338,13 +356,33 @@
             } catch (error) {}
         }
 
-        function startBroadcast() {
+        // 💡 하위 폴더 자동 생성을 위해 async 함수로 변경
+        async function startBroadcast() {
             if (!OPENAI_API_KEY) {
                 alert("API 키를 먼저 입력하고 저장해주세요!");
                 return;
             }
-            
+            if (!rootFolderHandle) {
+                alert("먼저 [📁 저장 폴더 연결하기] 버튼을 눌러 상위 폴더를 지정해 주세요!");
+                return;
+            }
+
+            try {
+                // 현재 날짜 및 시간으로 폴더 이름 만들기 (예: 2026-08-25_09-42-30)
+                const now = new Date();
+                const pad = (n) => String(n).padStart(2, '0');
+                const folderName = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+                
+                // 선택한 상위 폴더 내부에 하위 디렉토리 생성
+                sessionFolderHandle = await rootFolderHandle.getDirectoryHandle(folderName, { create: true });
+            } catch (e) {
+                alert("❌ 하위 폴더 생성 중 오류가 발생했습니다. 폴더 권한을 다시 확인해 주세요.");
+                return;
+            }
+
             isBroadcasting = true; totalProcessedLength = 0; globalUnprocessedText = ""; currentSentenceId = Date.now();
+            Object.keys(sessionFullTexts).forEach(lang => sessionFullTexts[lang] = []); // 안전을 위해 한 번 더 비우기
+
             recognition.start();
             document.getElementById('startBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = 'inline-block';
@@ -382,9 +420,36 @@
             }, 500);
         }
         
+        // 💡 [방송 종료] 시 바구니에 담긴 전체 텍스트를 파일로 한 번에 쓰기
         async function stopBroadcast() {
             isBroadcasting = false; clearInterval(silenceTimer);
             if(recognition) recognition.stop();
+
+            // 남은 찌꺼기 텍스트가 있다면 마지막으로 처리
+            if (globalUnprocessedText.trim().length > 0) {
+                let sentenceToProcess = globalUnprocessedText.trim();
+                globalUnprocessedText = "";
+                await processOpenAITranslation(sentenceToProcess, Date.now());
+            }
+
+            // AI 처리가 끝날 때까지 1.5초 대기 후 전체 파일 기록 실행
+            setTimeout(async () => {
+                if (sessionFolderHandle) {
+                    for (const lang of Object.keys(sessionFullTexts)) {
+                        if (sessionFullTexts[lang].length > 0) {
+                            try {
+                                const fullTextCombined = sessionFullTexts[lang].join("\n");
+                                const fileHandle = await sessionFolderHandle.getFileHandle(`${lang}_full.txt`, { create: true });
+                                const writable = await fileHandle.createWritable();
+                                await writable.write(fullTextCombined);
+                                await writable.close();
+                            } catch (e) {}
+                        }
+                    }
+                    alert("✅ 해당 방송 회차의 날짜별 폴더 안에 실시간 파일과 설교 전문(_full.txt)이 안전하게 저장되었습니다!");
+                }
+            }, 1500);
+
             document.getElementById('startBtn').style.display = 'inline-block';
             document.getElementById('stopBtn').style.display = 'none';
             
