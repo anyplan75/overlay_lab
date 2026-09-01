@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>예배 자막 제어판 (Admin)</title>
+    <style>
+        body { font-family: sans-serif; background: #2c3e50; color: white; padding: 30px; }
+        h1 { color: #f1c40f; }
+        .card { background: #34495e; padding: 20px; margin-bottom: 15px; border-radius: 8px; }
+        .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
+        label { display: flex; flex-direction: column; font-size: 16px; font-weight: bold; color: #ecf0f1; }
+        select, input { padding: 10px; margin-top: 5px; font-size: 16px; border-radius: 5px; border: none; font-weight: bold; }
+        .btn { padding: 20px 30px; font-size: 22px; font-weight: bold; background: #27ae60; color: white; border: none; border-radius: 8px; cursor: pointer; width: 100%; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>⚙️ 예배 자막 송출 설정 (어드민)</h1>
+    
+    <div class="card">
+        <h2 style="margin: 0 0 15px 0; color: #3498db;">🖥️ 자막 화면 및 스타일 설정</h2>
+        <div class="settings-grid">
+            <label>화면 배치:
+                <select id="layout">
+                    <option value="bottom">아래 (하단 전체)</option>
+                    <option value="top">위 (상단 전체)</option>
+                    <option value="left">왼쪽 (우측은 목사님)</option>
+                    <option value="right">오른쪽 (좌측은 목사님)</option>
+                </select>
+            </label>
+            <label>텍스트 정렬:
+                <select id="align">
+                    <option value="left">좌측 정렬</option>
+                    <option value="center">중앙 정렬</option>
+                    <option value="right">우측 정렬</option>
+                </select>
+            </label>
+            <label>글자 크기 (px):
+                <input type="text" id="fontSize" value="40px">
+            </label>
+            <label>글자 색상:
+                <input type="color" id="color" value="#ffffff" style="height: 45px; width: 100%;">
+            </label>
+            <label>배경 색상:
+                <input type="color" id="bgColor" value="#000000" style="height: 45px; width: 100%;">
+            </label>
+            <label>배경 투명도 (0~1):
+                <input type="number" id="bgOpacity" value="0.7" step="0.1" min="0" max="1">
+            </label>
+        </div>
+    </div>
+    
+    <button class="btn" onclick="applySettings()">💾 설정 즉시 적용하기</button>
+    <p id="msg" style="color: #2ecc71; font-weight: bold; text-align: center; margin-top: 20px; font-size: 20px;"></p>
+
+    <script>
+        // 💡 수신기들이 바라보는 정확한 경로로 수정했습니다.
+        const STYLE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/style.json";
+
+        async function loadSettings() {
+            try {
+                const res = await fetch(STYLE_URL);
+                const data = await res.json();
+                if (data) {
+                    document.getElementById('layout').value = data.layout || 'bottom';
+                    document.getElementById('align').value = data.align || 'center';
+                    document.getElementById('fontSize').value = data.fontSize || '40px';
+                    document.getElementById('color').value = data.color || '#ffffff';
+                    document.getElementById('bgColor').value = data.bgColor || '#000000';
+                    document.getElementById('bgOpacity').value = data.bgOpacity !== undefined ? data.bgOpacity : 0.7;
+                }
+            } catch (e) {}
+        }
+
+        async function applySettings() {
+            const styleData = {
+                layout: document.getElementById('layout').value,
+                align: document.getElementById('align').value,
+                fontSize: document.getElementById('fontSize').value,
+                color: document.getElementById('color').value,
+                bgColor: document.getElementById('bgColor').value,
+                bgOpacity: parseFloat(document.getElementById('bgOpacity').value)
+            };
+            
+            try {
+                await fetch(STYLE_URL, { method: "PUT", body: JSON.stringify(styleData) });
+                const msgBox = document.getElementById('msg');
+                msgBox.innerText = "✅ 설정이 실시간 화면에 반영되었습니다.";
+                setTimeout(() => msgBox.innerText = "", 3000);
+            } catch (e) { alert("설정 전송 실패"); }
+        }
+
+        loadSettings();
+    </script>
+</body>
+</html>

@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>예배 자막 송출기</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <h1>🎙️ 실시간 다중 송출 및 파일 저장 시스템</h1>
+    <p>1단계: 아이클라우드 JUN_Translate 폴더를 연결하세요. <br>2단계: 방송을 시작하세요.</p>
+    
+    <button id="folderBtn" class="btn" onclick="connectLocalFolder()">📁 저장 폴더 연결하기</button>
+    <button id="startBtn" class="btn" onclick="startBroadcast()">🔴 방송 시작</button>
+    <button id="stopBtn" class="btn" onclick="stopBroadcast()">⏹️ 방송 종료</button>
+
+    <div id="realtimeText">듣는 중...</div>
+    
+    <div id="logBox" style="background: #111; padding: 20px; border-radius: 8px; height: 500px; overflow-y: auto; margin-top: 20px; text-align: left; line-height: 1.8;"></div>
+
+    <script>
+        const GEMINI_API_KEY = "AIzaSyAHkYcv8tZ-NaRH2NBmLdVGQ-PjOOqwsiM";
+        const FIREBASE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/subtitles.json";
+        
+        let recognition;
+        let isBroadcasting = false;
+        let folderHandle = null;
+        
+        let globalFinalText = "";
+        let processedLength = 0;
+        let unprocessedText = "";
+        let currentSentenceId = Date.now();
+        let fullSermonText = "";
+        let lastSpeechTime = Date.now();
+        let silenceTimer = null;
+
+        async function connectLocalFolder() {
+            try {
+                folderHandle = await window.showDirectoryPicker();
+                document.getElementById('folderBtn').style.display = 'none';
+                document.getElementById('startBtn').style.display = 'inline-block';
+            } catch (error) {}
+        }
+
+        async function saveTextToFile(filename, content) {
+            if (!folderHandle) return;
+            try {
+                const fileHandle = await folderHandle.getFileHandle(filename, { create: true });
+                const writable = await fileHandle.createWritable();
+                await writable.write(content);
+                await writable.close();
+            } catch (error) {}
+        }
+
+        if (!('webkitSpeechRecognition' in window)) {
+            alert("구글 크롬을 사용해 주십시오.");
+        } else {
+            recognition = new webkitSpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'ko-KR';
+
+            recognition.onresult = function(event) {
+                lastSpeechTime = Date.now();
+                let currentInterim = "";
+
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        globalFinalText += event.results[i][0].transcript;
+                    } else {
+                        currentInterim += event.results[i][0].transcript;
+                    }
+                }
+
+                let totalText = globalFinalText + currentInterim;
+                unprocessedText = totalText.substring(processedLength);
+
+                if (unprocessedText.trim()) {
+                    let liveText = unprocessedText.trim();
+                    document.getElementById('realtimeText').innerText = `듣는 중: ${liveText}`;
+                    saveTextToFile('temp_live.txt', liveText);
+                }
+
+                // 💡 폭주 버그 해결: 정규식을 반복 실행하여 15글자 이후에 나오는 '첫 번째' 끝맺음말을 정확히 찾아냅니다.
+                let regex = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|[요다까나])(\s|[.,?!]|$)/g;
+                let match = null;
+                let execResult;
+                
+                while ((execResult = regex.exec(unprocessedText)) !== null) {
+                    if (execResult.index >= 15) {
+                        match = execResult;
+                        break;
+                    }
+                }
+
+                // 💡 문장이 80자(약 2줄 분량)를 넘어가면 안전을 위해 강제로 여백에서 잘라냅니다.
+                if (!match && unprocessedText.length > 80) {
+                    let lastSpace = unprocessedText.lastIndexOf(" ", 80);
+                    if (lastSpace > 20) match = { index: lastSpace, 0: " " };
+                    else match = { index: 80, 0: "" };
+                }
+                
+                while (match) {
+                    let cutIndex = match.index + match[0].length;
+                    let sentenceToProcess = unprocessedText.substring(0, cutIndex).trim();
+                    
+                    processedLength += cutIndex;
+                    unprocessedText = totalText.substring(processedLength);
+                    
+                    fullSermonText += sentenceToProcess + " ";
+                    let idToProcess = currentSentenceId;
+                    currentSentenceId = Date.now();
+                    
+                    if (sentenceToProcess.length > 0) {
+                        appendLogMessage(sentenceToProcess, idToProcess, false);
+                        processBackgroundCorrection(sentenceToProcess, idToProcess);
+                    }
+                    
+                    // 다음 토막을 찾기 위해 리셋
+                    match = null;
+                    regex.lastIndex = 0;
+                    
+                    while ((execResult = regex.exec(unprocessedText)) !== null) {
+                        if (execResult.index >= 15) {
+                            match = execResult;
+                            break;
+                        }
+                    }
+                    
+                    if (!match && unprocessedText.length > 80) {
+                        let lastSpace = unprocessedText.lastIndexOf(" ", 80);
+                        if (lastSpace > 20) match = { index: lastSpace, 0: " " };
+                        else match = { index: 80, 0: "" };
+                    }
+                }
+            };
+
+            recognition.onerror = function(event) {};
+            recognition.onend = function() {
+                if (isBroadcasting) { setTimeout(() => { try { recognition.start(); } catch(e) {} }, 10); }
+            };
+        }
+
+        function highlightDifferences(origText, corrText) {
+            const origWords = origText.trim().split(/\s+/);
+            const corrWords = corrText.trim().split(/\s+/);
+            return corrWords.map((word, idx) => {
+                if (idx >= origWords.length || origWords[idx] !== word) {
+                    return `<span style="color: #ff5252; font-weight: bold;">${word}</span>`;
+                }
+                return word;
+            }).join(" ");
+        }
+
+        function appendLogMessage(originalText, msgId, isCorrected, correctedText = "") {
+            const box = document.getElementById('logBox');
+            let targetDiv = document.getElementById(`log_${msgId}`);
+            
+            if (!targetDiv) {
+                targetDiv = document.createElement('div');
+                targetDiv.id = `log_${msgId}`;
+                targetDiv.style.marginBottom = "20px";
+                targetDiv.style.paddingBottom = "15px";
+                targetDiv.style.borderBottom = "1px solid #333";
+                box.appendChild(targetDiv);
+            }
+            
+            if (isCorrected) {
+                targetDiv.innerHTML = `
+                    <div style="color: #aaa; font-size: 16px; margin-bottom: 5px;">🎤 원본: ${originalText}</div>
+                    <div style="color: #00bcd4; font-size: 18px; font-weight: bold;">✨ 교정: ${correctedText}</div>
+                `;
+            } else {
+                targetDiv.innerHTML = `
+                    <div style="color: #aaa; font-size: 16px; margin-bottom: 5px;">🎤 원본: ${originalText}</div>
+                    <div style="color: #555; font-size: 18px; font-weight: bold;">✨ 교정: (문맥 다듬는 중...)</div>
+                `;
+            }
+            box.scrollTop = box.scrollHeight;
+        }
+
+        async function processBackgroundCorrection(text, msgId) {
+            let cleanCorrected = await correctKoreanWithGemini(text);
+            
+            if (!cleanCorrected || cleanCorrected === text) {
+                cleanCorrected = text.replace(/하나님 의/g, '하나님의').replace(/예수 그리스도/g, '예수 그리스도의').replace(/성령 님/g, '성령님');
+            } else {
+                cleanCorrected = cleanCorrected.replace(/하나님의/g, '하나님의').replace(/성령님/g, '성령님');
+            }
+
+            let highlightedHtml = highlightDifferences(text, cleanCorrected);
+            appendLogMessage(text, msgId, true, highlightedHtml);
+            sendToFirebaseAndTranslate(cleanCorrected, msgId);
+        }
+
+        async function correctKoreanWithGemini(text) {
+            try {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+                const prompt = `너는 기독교 설교 교정 전문가야. 다음 원문의 오탈자와 띄어쓰기를 문맥에 맞게 다듬어. 부연 설명 없이 교정된 결과만 출력해:\n\n원본: ${text}`;
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2 } })
+                });
+                
+                if (!response.ok) return text;
+                
+                const result = await response.json();
+                if (result.candidates && result.candidates.length > 0) return result.candidates[0].content.parts[0].text.trim();
+            } catch (error) {}
+            return text;
+        }
+
+        async function fetchTranslation(text, targetLang) {
+            try {
+                const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+                const response = await fetch(url);
+                if (!response.ok) throw new Error("무료 번역 막힘");
+                const data = await response.json();
+                return data[0].map(item => item[0]).join("");
+            } catch (error) {
+                try {
+                    const langMap = { 'en': '영어', 'zh-CN': '중국어(간체)', 'vi': '베트남어', 'id': '인도네시아어', 'ne': '네팔어', 'tl': '타갈로그어', 'ru': '러시아어' };
+                    const targetLangName = langMap[targetLang] || targetLang;
+                    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+                    
+                    const prompt = `다음 한국어 문장을 ${targetLangName}로 번역해. 부연 설명 없이 번역된 결과만 출력해:\n\n${text}`;
+                    const response = await fetch(geminiUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
+                    const result = await response.json();
+                    
+                    if (result.candidates && result.candidates.length > 0) return result.candidates[0].content.parts[0].text.trim();
+                } catch (apiError) {}
+            }
+            return text;
+        }
+
+        async function sendToFirebaseAndTranslate(cleanCorrected, msgId) {
+            const targetLangs = ['en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'];
+            let translationPayload = { _timestamp: Date.now() };
+
+            saveTextToFile('ko.txt', cleanCorrected);
+            translationPayload['ko'] = { text: cleanCorrected, id: msgId };
+
+            await Promise.all(targetLangs.map(async (lang) => {
+                let trans = await fetchTranslation(cleanCorrected, lang);
+                saveTextToFile(`${lang}.txt`, trans);
+                translationPayload[lang] = { text: trans, id: msgId };
+            }));
+
+            fetch(FIREBASE_URL, { method: "PATCH", body: JSON.stringify(translationPayload) }).catch(e => {});
+        }
+
+        function startBroadcast() {
+            isBroadcasting = true; fullSermonText = ""; globalFinalText = ""; processedLength = 0; unprocessedText = ""; currentSentenceId = Date.now();
+            recognition.start();
+            document.getElementById('startBtn').style.display = 'none';
+            document.getElementById('stopBtn').style.display = 'inline-block';
+
+            silenceTimer = setInterval(() => {
+                if (isBroadcasting) {
+                    let silenceDuration = Date.now() - lastSpeechTime;
+                    if (silenceDuration > 4500 && unprocessedText.trim().length > 0) {
+                        let sentenceToProcess = unprocessedText.trim();
+                        processedLength += unprocessedText.length;
+                        unprocessedText = "";
+                        fullSermonText += sentenceToProcess + " ";
+                        let idToProcess = currentSentenceId;
+                        currentSentenceId = Date.now();
+                        
+                        appendLogMessage(sentenceToProcess, idToProcess, false);
+                        processBackgroundCorrection(sentenceToProcess, idToProcess);
+                    }
+                }
+            }, 1000);
+        }
+        
+        async function stopBroadcast() {
+            isBroadcasting = false; clearInterval(silenceTimer);
+            if(recognition) recognition.stop();
+            document.getElementById('startBtn').style.display = 'inline-block';
+            document.getElementById('stopBtn').style.display = 'none';
+            fetch(FIREBASE_URL, { method: "PUT", body: JSON.stringify({ _timestamp: Date.now() }) });
+        }
+    </script>
+</body>
+</html>

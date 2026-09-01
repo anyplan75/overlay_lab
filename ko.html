@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>한국어 자막 (회색-흰색 전환 기능 탑재)</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="container" class="layout-bottom">
+        <div id="subtitle">한국어 자막 대기 중...</div>
+    </div>
+    <script>
+        const currentLang = 'ko';
+        
+        let lastTime = 0, subtitleLines = [], maxLines = 15;
+        
+        function updateSubtitle() {
+            fetch("https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/.json")
+            .then(r => r.json())
+            .then(d => {
+                const c = document.getElementById('container'), s = document.getElementById('subtitle');
+                
+                if (d && d.settings) {
+                    if (d.settings.global) {
+                        c.className = 'layout-' + d.settings.global.layout;
+                        maxLines = (d.settings.global.layout === 'top' || d.settings.global.layout === 'bottom') ? 3 : 15;
+                        
+                        s.style.textAlign = d.settings.global.align || 'center';
+                        s.style.color = d.settings.global.color || '#ffffff';
+                        let h = (d.settings.global.bgColor || '#000000').replace('#', '');
+                        let r = parseInt(h.substring(0,2), 16), g = parseInt(h.substring(2,4), 16), b = parseInt(h.substring(4,6), 16);
+                        let op = d.settings.global.bgOpacity !== undefined ? d.settings.global.bgOpacity : 0.7;
+                        s.style.backgroundColor = `rgba(${r}, ${g}, ${b}, ${op})`;
+                    }
+                    
+                    let langSetting = d.settings[currentLang];
+                    if (langSetting) {
+                        if (langSetting.show === false) {
+                            c.style.display = 'none';
+                        } else {
+                            c.style.display = 'flex';
+                            s.style.fontSize = langSetting.fontSize + 'px';
+                            s.style.letterSpacing = langSetting.letterSpacing + 'px';
+                        }
+                    }
+                }
+                
+                if (d && d.subtitles && d.subtitles._timestamp !== lastTime) {
+                    lastTime = d.subtitles._timestamp;
+                    let n = d.subtitles[currentLang];
+                    
+                    if (n) {
+                        let text = typeof n === 'object' ? n.text : n;
+                        let msgId = typeof n === 'object' ? n.id : lastTime;
+                        // 💡 꼬리표가 없으면 기본적으로 완료(true)로 간주
+                        let isFinal = typeof n === 'object' && n.isFinal !== undefined ? n.isFinal : true;
+                        
+                        let existingIndex = subtitleLines.findIndex(line => line.id === msgId);
+                        
+                        if (existingIndex !== -1) {
+                            subtitleLines[existingIndex].text = text;
+                            subtitleLines[existingIndex].isFinal = isFinal;
+                        } else {
+                            subtitleLines.push({id: msgId, text: text, isFinal: isFinal});
+                            while (subtitleLines.length > maxLines) subtitleLines.shift();
+                        }
+                        
+                        s.innerHTML = subtitleLines.map(line => {
+                            // 💡 교정 전(실시간)이면 흐린 회색 텍스트로 처리
+                            if (line.isFinal === false) {
+                                return `<span style="color: #9e9e9e;">${line.text}</span>`;
+                            } else {
+                                return line.text; // 교정이 끝나면 원래 설정된 색(흰색)으로 돌아옴
+                            }
+                        }).join('<br>');
+                    }
+                }
+            });
+        }
+        setInterval(updateSubtitle, 300);
+    </script>
+</body>
+</html>

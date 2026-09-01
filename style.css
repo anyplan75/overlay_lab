@@ -1,0 +1,40 @@
+@charset "UTF-8";
+
+body { font-family: 'Malgun Gothic', sans-serif; background: #1e1e1e; color: white; padding: 20px; margin: 0; }
+h1 { color: #4CAF50; text-align: center; }
+.btn { padding: 15px 30px; font-size: 18px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; margin: 10px; }
+#folderBtn { background-color: #FF9800; color: white; }
+#startBtn { background-color: #f44336; color: white; display: none; }
+#stopBtn { background-color: #2196F3; color: white; display: none; }
+#realtimeText { background: #333; color: #ffeb3b; padding: 15px; border-radius: 8px; font-size: 22px; margin-top: 20px; font-weight: bold; text-align: center; }
+
+/* 수신기 OBS 화면 설정 */
+body:has(#container) { background: transparent; padding: 0; overflow: hidden; }
+
+/* 💡 글자가 위로 넘어가면 가려지도록 overflow: hidden; 추가 */
+#container {
+    position: absolute; width: 100vw; height: 100vh; display: flex; flex-direction: column;
+    box-sizing: border-box; padding: 40px; pointer-events: none;
+    overflow: hidden;
+}
+
+/* 💡 모든 방향이 '밑바닥'에서부터 시작되어 위로 쌓이도록 flex-end 통일 */
+.layout-bottom { justify-content: flex-end; align-items: center; }
+.layout-top { justify-content: flex-start; align-items: center; }
+.layout-left { justify-content: flex-end; align-items: flex-start; }
+.layout-right { justify-content: flex-end; align-items: flex-end; }
+
+#subtitle {
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+    border-radius: 10px;
+    padding: 15px 25px;
+    line-height: 1.5;
+    font-weight: bold;
+    display: inline-block;
+    max-width: 90vw;
+    word-break: keep-all;
+    overflow-wrap: break-word;
+}
+
+/* 목사님 화면 확보를 위해 좌/우 배치 시 폭 제한 */
+.layout-left #subtitle, .layout-right #subtitle { max-width: 40vw; }

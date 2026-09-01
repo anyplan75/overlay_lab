@@ -1,0 +1,37 @@
+@charset "UTF-8";
+
+body { font-family: 'Malgun Gothic', sans-serif; background: #1e1e1e; color: white; padding: 20px; margin: 0; }
+h1 { color: #4CAF50; text-align: center; }
+.btn { padding: 15px 30px; font-size: 18px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; margin: 10px; }
+#folderBtn { background-color: #FF9800; color: white; }
+#startBtn { background-color: #f44336; color: white; display: none; }
+#stopBtn { background-color: #2196F3; color: white; display: none; }
+#realtimeText { background: #333; color: #ffeb3b; padding: 15px; border-radius: 8px; font-size: 22px; margin-top: 20px; font-weight: bold; text-align: center; }
+
+/* 수신기 OBS 화면 설정 */
+body:has(#container) { background: transparent; padding: 0; overflow: hidden; }
+
+/* 💡 화면 전체를 감싸고, 내부 자막의 상/하/좌/우 위치를 결정하는 핵심 컨테이너 */
+#container {
+    position: absolute; width: 100vw; height: 100vh; display: flex; flex-direction: column;
+    box-sizing: border-box; padding: 40px; pointer-events: none;
+}
+
+/* 💡 어드민 명령에 따라 자막이 뻗어나가는 방향을 결정합니다 */
+.layout-bottom { justify-content: flex-end; align-items: center; } /* 바닥에 고정되어 위로 쌓임 */
+.layout-top { justify-content: flex-start; align-items: center; }  /* 천장에 고정되어 아래로 쌓임 */
+.layout-left { justify-content: center; align-items: flex-start; } /* 좌측 중앙 */
+.layout-right { justify-content: center; align-items: flex-end; }  /* 우측 중앙 */
+
+#subtitle {
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+    border-radius: 10px;
+    padding: 15px 25px;
+    line-height: 1.5;
+    font-weight: bold;
+    display: inline-block;
+    max-width: 90vw;
+}
+
+/* 왼쪽, 오른쪽 배치 시 목사님 화면 확보를 위해 폭 제한 */
+.layout-left #subtitle, .layout-right #subtitle { max-width: 40vw; }

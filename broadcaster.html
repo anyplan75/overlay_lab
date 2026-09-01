@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>예배 자막 송출기 (날짜별 자동 폴더 & 전문 저장 완료본)</title>
+    
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+    <style>
+        body { font-family: 'Malgun Gothic', sans-serif; background: #1e1e1e; color: white; padding: 20px; margin: 0; user-select: none; }
+        h1 { color: #4CAF50; text-align: center; margin-bottom: 10px; }
+        .btn { padding: 15px 30px; font-size: 18px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; margin: 10px; transition: 0.3s; }
+        #folderBtn { background-color: #FF9800; color: white; }
+        #startBtn { background-color: #f44336; color: white; display: none; }
+        #stopBtn { background-color: #2196F3; color: white; display: none; }
+        #realtimeText {
+            background: #333; color: #ffeb3b; padding: 15px; border-radius: 8px;
+            font-size: 22px; margin-top: 20px; font-weight: bold; text-align: center;
+            transition: color 0.3s; word-break: break-word; white-space: pre-wrap;
+            max-height: 90px; overflow-y: auto;
+        }
+        .key-container { background: #2c3e50; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        
+        /* 스위치 토글 디자인 */
+        .switch-container { background: #34495e; padding: 12px; border-radius: 8px; text-align: center; margin-bottom: 15px; display: inline-block; }
+        .switch { position: relative; display: inline-block; width: 60px; height: 34px; vertical-align: middle; margin-left: 10px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px; }
+        .slider:before { position: absolute; content: ""; height: 26px; width: 26px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #2196F3; }
+        input:checked + .slider:before { transform: translateX(26px); }
+    </style>
+</head>
+<body>
+
+    <h1>🎙️ 실시간 다중 송출 시스템</h1>
+    
+    <div class="key-container">
+        <label for="apiKeyInput" style="font-weight: bold; font-size: 18px; margin-right: 10px;">🔑 OpenAI API 키:</label>
+        <input type="password" id="apiKeyInput" placeholder="sk-proj-..." style="padding: 10px; font-size: 16px; width: 300px; border-radius: 5px; border: none;">
+        <button class="btn" style="padding: 10px 20px; font-size: 16px; margin: 0 0 0 10px; background: #3498db;" onclick="saveApiKey()">내 PC에 저장</button>
+        <p style="font-size: 13px; color: #bdc3c7; margin-top: 10px;">* 한 번만 저장하면 브라우저가 기억합니다. (깃허브 코드에는 절대 올라가지 않아 안전합니다)</p>
+    </div>
+
+    <!-- 실시간 덮어쓰기 모드 ON/OFF 스위치 -->
+    <div style="text-align: center;">
+        <div class="switch-container">
+            <span style="font-weight: bold; font-size: 16px;">⚡ 실시간 덮어쓰기 모드 (Live Preview):</span>
+            <label class="switch">
+                <input type="checkbox" id="liveToggle" checked>
+                <span class="slider"></span>
+            </label>
+        </div>
+    </div>
+
+    <div style="text-align: center;">
+        <button id="folderBtn" class="btn" onclick="connectLocalFolder()">📁 저장 폴더 연결하기</button>
+        <button id="startBtn" class="btn" onclick="startBroadcast()">🔴 방송 시작</button>
+        <button id="stopBtn" class="btn" onclick="stopBroadcast()">⏹️ 방송 종료</button>
+    </div>
+
+    <div id="realtimeText">대기 중...</div>
+    
+    <div id="logBox" style="background: #111; padding: 20px; border-radius: 8px; height: 500px; overflow-y: auto; margin-top: 20px; text-align: left; line-height: 1.8;"></div>
+
+    <script>
+        const FIREBASE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/subtitles.json";
+        
+        let OPENAI_API_KEY = localStorage.getItem('saved_openai_key') || "";
+        document.getElementById('apiKeyInput').value = OPENAI_API_KEY;
+
+        function saveApiKey() {
+            const inputKey = document.getElementById('apiKeyInput').value.trim();
+            if (inputKey.startsWith("sk-")) {
+                OPENAI_API_KEY = inputKey;
+                localStorage.setItem('saved_openai_key', OPENAI_API_KEY);
+                alert("✅ 키가 브라우저에 안전하게 저장되었습니다! 이제 방송을 시작하셔도 됩니다.");
+            } else {
+                alert("❌ 올바른 OpenAI API 키 형식이 아닙니다. (sk- 로 시작해야 합니다)");
+            }
+        }
+
+        let recognition;
+        let isBroadcasting = false;
+        
+        // 💡 폴더 관리를 위한 변수들 추가
+        let rootFolderHandle = null;
+        let sessionFolderHandle = null;
+        
+        let totalProcessedLength = 0;
+        let globalUnprocessedText = "";
+        let currentSentenceId = Date.now();
+        let lastSpeechTime = Date.now();
+        let silenceTimer = null;
+        let lastLivePushTime = 0;
+
+        // 💡 전체 설교 전문을 담을 언어별 바구니
+        let sessionFullTexts = {
+            'ko': [], 'en': [], 'zh-CN': [], 'vi': [], 'id': [], 'ne': [], 'tl': [], 'ru': []
+        };
+
+        // 1. 최상위 저장 폴더 연결
+        async function connectLocalFolder() {
+            try {
+                rootFolderHandle = await window.showDirectoryPicker();
+                document.getElementById('folderBtn').style.display = 'none';
+                document.getElementById('startBtn').style.display = 'inline-block';
+                alert("✅ 저장 폴더가 연결되었습니다! [방송 시작]을 누르면 오늘 날짜/시간으로 하위 폴더가 자동 생성됩니다.");
+            } catch (error) {}
+        }
+
+        // 2. 파일 덮어쓰기 (실시간 송출용 - 생성된 하위 폴더에 저장)
+        async function saveTextToFile(filename, content) {
+            if (!sessionFolderHandle) return;
+            try {
+                const fileHandle = await sessionFolderHandle.getFileHandle(filename, { create: true });
+                const writable = await fileHandle.createWritable();
+                await writable.write(content);
+                await writable.close();
+            } catch (error) {}
+        }
+
+        function findCutMatch(text) {
+            let regexEnd = /(습니다|합니다|하십니다|바랍니다|축원합니다|할지어다|아멘|하옵소서|나이다|옵소서|이옵니다|습니까|합니까|인가요|은가요|는가요|네요|어요|아요|예요|대요|지요|군요|죠|거늘|시니|느냐|도다|입니까|입니다|잖아요)(\s|[.,?!]|$)/g;
+            let execResult;
+            
+            while ((execResult = regexEnd.exec(text)) !== null) {
+                if (execResult.index >= 10) return execResult;
+            }
+
+            if (text.length >= 60) {
+                let regexClause = /(고|며|는데|지만|면서|니까|어서|아서|으니|도록|하며|하고)(\s)/g;
+                let match = null;
+                while ((execResult = regexClause.exec(text)) !== null) {
+                    if (execResult.index >= 20) {
+                        match = execResult;
+                        if (execResult.index > 70) break;
+                    }
+                }
+                if (match) return match;
+                
+                if (text.length >= 90) {
+                    let lastSpace = text.lastIndexOf(" ", 85);
+                    if (lastSpace > 20) return { index: lastSpace, 0: " " };
+                    return { index: 90, 0: "" };
+                }
+            }
+            
+            return null;
+        }
+
+        if (!('webkitSpeechRecognition' in window)) {
+            alert("구글 크롬을 사용해 주십시오.");
+        } else {
+            recognition = new webkitSpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'ko-KR';
+
+            recognition.onstart = function() {
+                totalProcessedLength = 0;
+                // 마이크 켤 때마다 전체 바구니 초기화
+                Object.keys(sessionFullTexts).forEach(lang => sessionFullTexts[lang] = []);
+                
+                const rt = document.getElementById('realtimeText');
+                rt.innerText = "🟢 마이크 준비 완료!";
+                rt.style.color = "#4CAF50";
+            };
+
+            recognition.onresult = function(event) {
+                lastSpeechTime = Date.now();
+                document.getElementById('realtimeText').style.color = "#ffeb3b";
+
+                let totalText = "";
+                for (let i = 0; i < event.results.length; ++i) {
+                    totalText += event.results[i][0].transcript;
+                }
+
+                let unprocessedText = totalText.substring(totalProcessedLength);
+
+                let match = findCutMatch(unprocessedText);
+                
+                while (match) {
+                    let cutIndex = match.index + match[0].length;
+                    let sentenceToProcess = unprocessedText.substring(0, cutIndex).trim();
+                    
+                    const isLiveOn = document.getElementById('liveToggle').checked;
+                    if (isLiveOn) {
+                        fetch(FIREBASE_URL, {
+                            method: "PATCH",
+                            body: JSON.stringify({
+                                _timestamp: Date.now(),
+                                ko: { text: sentenceToProcess, id: currentSentenceId }
+                            })
+                        }).catch(e => {});
+                    }
+
+                    totalProcessedLength += cutIndex;
+                    unprocessedText = totalText.substring(totalProcessedLength);
+                    
+                    let idToProcess = currentSentenceId;
+                    currentSentenceId = Date.now();
+                    
+                    if (sentenceToProcess.length > 0) {
+                        appendLogMessage(sentenceToProcess, idToProcess, false);
+                        processOpenAITranslation(sentenceToProcess, idToProcess);
+                    }
+                    
+                    match = findCutMatch(unprocessedText);
+                }
+
+                let liveText = unprocessedText.trim();
+                const isLiveOn = document.getElementById('liveToggle').checked;
+
+                if (liveText) {
+                    let displayLiveText = liveText.length > 70 ? "..." + liveText.substring(liveText.length - 70) : liveText;
+                    document.getElementById('realtimeText').innerText = `듣는 중: ${displayLiveText}`;
+                    
+                    if (isLiveOn && Date.now() - lastLivePushTime > 200) {
+                        lastLivePushTime = Date.now();
+                        fetch(FIREBASE_URL, {
+                            method: "PATCH",
+                            body: JSON.stringify({
+                                _timestamp: Date.now(),
+                                ko: { text: liveText, id: currentSentenceId }
+                            })
+                        }).catch(e => {});
+                        saveTextToFile('temp_live.txt', liveText);
+                    }
+                } else {
+                    document.getElementById('realtimeText').innerText = `듣는 중: ...`;
+                }
+
+                globalUnprocessedText = unprocessedText;
+            };
+
+            recognition.onend = function() {
+                if (isBroadcasting) { setTimeout(() => { try { recognition.start(); } catch(e) {} }, 10); }
+            };
+        }
+
+        function highlightDifferences(origText, corrText) {
+            const origWords = origText.trim().split(/\s+/);
+            const corrWords = corrText.trim().split(/\s+/);
+            return corrWords.map((word, idx) => {
+                if (idx >= origWords.length || origWords[idx] !== word) {
+                    return `<span style="color: #ff5252; font-weight: bold;">${word}</span>`;
+                }
+                return word;
+            }).join(" ");
+        }
+
+        function appendLogMessage(originalText, msgId, isFinished, korText = "") {
+            const box = document.getElementById('logBox');
+            let targetDiv = document.getElementById(`log_${msgId}`);
+            
+            if (!targetDiv) {
+                targetDiv = document.createElement('div');
+                targetDiv.id = `log_${msgId}`;
+                targetDiv.style.marginBottom = "20px";
+                targetDiv.style.paddingBottom = "15px";
+                targetDiv.style.borderBottom = "1px solid #333";
+                box.appendChild(targetDiv);
+            }
+            
+            if (isFinished) {
+                targetDiv.innerHTML = `
+                    <div style="color: #aaa; font-size: 16px; margin-bottom: 5px;">🎤 원본: ${originalText}</div>
+                    <div style="color: #00bcd4; font-size: 18px; font-weight: bold;">✨ 교정 및 번역 완료: ${korText}</div>
+                `;
+            } else {
+                targetDiv.innerHTML = `
+                    <div style="color: #aaa; font-size: 16px; margin-bottom: 5px;">🎤 원본: ${originalText}</div>
+                    <div style="color: #555; font-size: 18px; font-weight: bold;">✨ AI 교정 및 다국어 통역 중...</div>
+                `;
+            }
+            box.scrollTop = box.scrollHeight;
+        }
+
+        async function processOpenAITranslation(koreanText, msgId) {
+            if (!OPENAI_API_KEY) {
+                appendLogMessage(koreanText, msgId, true, "<span style='color:red;'>[오류] API 키를 입력해 주세요.</span>");
+                return;
+            }
+
+            const prompt = `
+너는 기독교 예배 설교를 전담하는 최고 수준의 동시통역사야.
+다음 목사님의 설교 발화를 읽고:
+1) 한국어 오탈자와 띄어쓰기를 문맥에 맞게 다듬어 교정해.
+2) 나머지 7개 언어로 자연스럽고 영적인 울림이 있도록 번역해.
+3) [원문 사수] 원문에 있는 단어를 임의로 빼거나 삭제하지 말고 모두 포함해.
+4) [요약 및 중략 절대 금지] 내용을 임의로 요약하거나 생략하지 마.
+5) [미완성 어미 보존] 원문이 '~고', '~는데', '~서', '~며' 등의 연결어미나 미완성 상태로 끝났다면, 억지로 '~습니다', '~합니다'로 문장을 닫지 말고 원문 그대로 살려둬.
+
+반드시 아래 JSON 형식으로만 응답해:
+{
+  "ko": "교정된 한국어",
+  "en": "영어 번역",
+  "zh-CN": "중국어 번역",
+  "vi": "베트남어 번역",
+  "id": "인도네시아어 번역",
+  "ne": "네팔어 번역",
+  "tl": "타갈로그어 번역",
+  "ru": "러시아어 번역"
+}
+
+발화 원본: "${koreanText}"
+`;
+
+            try {
+                const response = await fetch("https://api.openai.com/v1/chat/completions", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${OPENAI_API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        model: "gpt-4o",
+                        messages: [{ role: "user", content: prompt }],
+                        response_format: { type: "json_object" },
+                        temperature: 0.2
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.error) {
+                    appendLogMessage(koreanText, msgId, true, `<span style='color:red;'>[오류] ${data.error.message}</span>`);
+                    return;
+                }
+
+                const result = JSON.parse(data.choices[0].message.content);
+
+                let highlightedHtml = highlightDifferences(koreanText, result.ko);
+                appendLogMessage(koreanText, msgId, true, highlightedHtml);
+
+                let translationPayload = { _timestamp: Date.now() };
+                ['ko', 'en', 'zh-CN', 'vi', 'id', 'ne', 'tl', 'ru'].forEach(lang => {
+                    if (result[lang]) {
+                        // 1. 개별 파일 덮어쓰기 (실시간 자막 송출용)
+                        saveTextToFile(`${lang}.txt`, result[lang]);
+                        
+                        // 2. 💡 전체 설교 본문을 바구니에 차곡차곡 누적
+                        if (!sessionFullTexts[lang]) sessionFullTexts[lang] = [];
+                        sessionFullTexts[lang].push(result[lang]);
+
+                        translationPayload[lang] = { text: result[lang], id: msgId };
+                    }
+                });
+
+                fetch(FIREBASE_URL, { method: "PATCH", body: JSON.stringify(translationPayload) }).catch(e => {});
+
+            } catch (error) {}
+        }
+
+        // 💡 하위 폴더 자동 생성을 위해 async 함수로 변경
+        async function startBroadcast() {
+            if (!OPENAI_API_KEY) {
+                alert("API 키를 먼저 입력하고 저장해주세요!");
+                return;
+            }
+            if (!rootFolderHandle) {
+                alert("먼저 [📁 저장 폴더 연결하기] 버튼을 눌러 상위 폴더를 지정해 주세요!");
+                return;
+            }
+
+            try {
+                // 현재 날짜 및 시간으로 폴더 이름 만들기 (예: 2026-08-25_09-42-30)
+                const now = new Date();
+                const pad = (n) => String(n).padStart(2, '0');
+                const folderName = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+                
+                // 선택한 상위 폴더 내부에 하위 디렉토리 생성
+                sessionFolderHandle = await rootFolderHandle.getDirectoryHandle(folderName, { create: true });
+            } catch (e) {
+                alert("❌ 하위 폴더 생성 중 오류가 발생했습니다. 폴더 권한을 다시 확인해 주세요.");
+                return;
+            }
+
+            isBroadcasting = true; totalProcessedLength = 0; globalUnprocessedText = ""; currentSentenceId = Date.now();
+            Object.keys(sessionFullTexts).forEach(lang => sessionFullTexts[lang] = []); // 안전을 위해 한 번 더 비우기
+
+            recognition.start();
+            document.getElementById('startBtn').style.display = 'none';
+            document.getElementById('stopBtn').style.display = 'inline-block';
+
+            silenceTimer = setInterval(() => {
+                if (isBroadcasting) {
+                    let silenceDuration = Date.now() - lastSpeechTime;
+                    
+                    if (silenceDuration > 2000 && globalUnprocessedText.trim().length > 0) {
+                        let sentenceToProcess = globalUnprocessedText.trim();
+                        
+                        const isLiveOn = document.getElementById('liveToggle').checked;
+                        if (isLiveOn) {
+                            fetch(FIREBASE_URL, {
+                                method: "PATCH",
+                                body: JSON.stringify({
+                                    _timestamp: Date.now(),
+                                    ko: { text: sentenceToProcess, id: currentSentenceId }
+                                })
+                            }).catch(e => {});
+                        }
+
+                        totalProcessedLength += globalUnprocessedText.length;
+                        globalUnprocessedText = "";
+                        
+                        let idToProcess = currentSentenceId;
+                        currentSentenceId = Date.now();
+                        
+                        appendLogMessage(sentenceToProcess, idToProcess, false);
+                        processOpenAITranslation(sentenceToProcess, idToProcess);
+                        
+                        document.getElementById('realtimeText').innerText = `듣는 중: ...`;
+                    }
+                }
+            }, 500);
+        }
+        
+        // 💡 [방송 종료] 시 바구니에 담긴 전체 텍스트를 파일로 한 번에 쓰기
+        async function stopBroadcast() {
+            isBroadcasting = false; clearInterval(silenceTimer);
+            if(recognition) recognition.stop();
+
+            // 남은 찌꺼기 텍스트가 있다면 마지막으로 처리
+            if (globalUnprocessedText.trim().length > 0) {
+                let sentenceToProcess = globalUnprocessedText.trim();
+                globalUnprocessedText = "";
+                await processOpenAITranslation(sentenceToProcess, Date.now());
+            }
+
+            // AI 처리가 끝날 때까지 1.5초 대기 후 전체 파일 기록 실행
+            setTimeout(async () => {
+                if (sessionFolderHandle) {
+                    for (const lang of Object.keys(sessionFullTexts)) {
+                        if (sessionFullTexts[lang].length > 0) {
+                            try {
+                                const fullTextCombined = sessionFullTexts[lang].join("\n");
+                                const fileHandle = await sessionFolderHandle.getFileHandle(`${lang}_full.txt`, { create: true });
+                                const writable = await fileHandle.createWritable();
+                                await writable.write(fullTextCombined);
+                                await writable.close();
+                            } catch (e) {}
+                        }
+                    }
+                    alert("✅ 해당 방송 회차의 날짜별 폴더 안에 실시간 파일과 설교 전문(_full.txt)이 안전하게 저장되었습니다!");
+                }
+            }, 1500);
+
+            document.getElementById('startBtn').style.display = 'inline-block';
+            document.getElementById('stopBtn').style.display = 'none';
+            
+            const rt = document.getElementById('realtimeText');
+            rt.innerText = "대기 중...";
+            rt.style.color = "#ffeb3b";
+            
+            fetch(FIREBASE_URL, { method: "PUT", body: JSON.stringify({ _timestamp: Date.now() }) });
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>예배 자막 멀티뷰 모니터링</title>
+    
+    <!-- 💡 독립 데스크톱/모바일 앱 실행 메타 태그 -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+    <style>
+        body {
+            background: #121212;
+            color: white;
+            font-family: 'Malgun Gothic', sans-serif;
+            margin: 0;
+            padding: 15px 20px;
+            height: 100vh; /* 화면 전체 높이 꽉 채우기 */
+            box-sizing: border-box;
+            overflow: hidden; /* 전체 화면 스크롤 방지 */
+            user-select: none; /* 앱처럼 텍스트 드래그 방지 */
+        }
+        h1 {
+            text-align: center;
+            color: #4CAF50;
+            margin: 0 0 15px 0;
+            font-size: 24px;
+        }
+        /* 💡 가로 4칸, 세로 2칸으로 화면을 분할하여 꽉 채움 */
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            grid-template-rows: repeat(2, 1fr);
+            gap: 15px;
+            height: calc(100vh - 60px);
+        }
+        @media (max-width: 1200px) {
+            .grid-container { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(4, 1fr); }
+        }
+        
+        .lang-box {
+            background: #1e1e1e;
+            border: 2px solid #333;
+            border-radius: 10px;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.5);
+            overflow: hidden;
+        }
+        .lang-title {
+            font-size: 17px;
+            font-weight: bold;
+            color: #ffeb3b;
+            border-bottom: 1px solid #444;
+            padding-bottom: 8px;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        .lang-content {
+            flex-grow: 1;
+            font-size: 15px;
+            line-height: 1.6;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            word-break: keep-all;
+            overflow-wrap: break-word;
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+        .lang-content p {
+            margin: 0 0 8px 0;
+            border-bottom: 1px dashed #333;
+            padding-bottom: 8px;
+        }
+        .lang-content p:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            color: #00bcd4;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🖥️ 실시간 다국어 자막 모니터링 (멀티뷰)</h1>
+    
+    <div class="grid-container" id="monitorGrid"></div>
+
+    <script>
+        const FIREBASE_URL = "https://overlay-lab-default-rtdb.asia-southeast1.firebasedatabase.app/.json";
+        
+        const languages = [
+            { code: 'ko', name: '🇰🇷 한국어 (Korean)' },
+            { code: 'en', name: '🇺🇸 영어 (English)' },
+            { code: 'zh-CN', name: '🇨🇳 중국어 (Chinese)' },
+            { code: 'vi', name: '🇻🇳 베트남어 (Vietnamese)' },
+            { code: 'id', name: '🇮🇩 인도네시아어 (Indonesian)' },
+            { code: 'ne', name: '🇳🇵 네팔어 (Nepali)' },
+            { code: 'tl', name: '🇵🇭 타갈로그어 (Tagalog)' },
+            { code: 'ru', name: '🇷🇺 러시아어 (Russian)' }
+        ];
+
+        const grid = document.getElementById('monitorGrid');
+        let langData = {};
+
+        languages.forEach(lang => {
+            langData[lang.code] = { lastTime: 0, lines: [] };
+            grid.innerHTML += `
+                <div class="lang-box">
+                    <div class="lang-title">${lang.name}</div>
+                    <div class="lang-content" id="box_${lang.code}">
+                        <p style="text-align:center; color:#777; border:none;">대기 중...</p>
+                    </div>
+                </div>
+            `;
+        });
+
+        function updateMonitor() {
+            fetch(FIREBASE_URL)
+            .then(r => r.json())
+            .then(d => {
+                if (d && d.subtitles) {
+                    const currentTimestamp = d.subtitles._timestamp;
+                    
+                    languages.forEach(lang => {
+                        let code = lang.code;
+                        let n = d.subtitles[code];
+                        
+                        if (n && currentTimestamp !== langData[code].lastTime) {
+                            langData[code].lastTime = currentTimestamp;
+                            
+                            let text = typeof n === 'object' ? n.text : n;
+                            let msgId = typeof n === 'object' ? n.id : currentTimestamp;
+                            
+                            let existingIndex = langData[code].lines.findIndex(line => line.id === msgId);
+                            
+                            if (existingIndex !== -1) {
+                                langData[code].lines[existingIndex].text = text;
+                            } else {
+                                langData[code].lines.push({ id: msgId, text: text });
+                                while (langData[code].lines.length > 4) {
+                                    langData[code].lines.shift();
+                                }
+                            }
+                            
+                            document.getElementById(`box_${code}`).innerHTML =
+                                langData[code].lines.map(line => `<p>${line.text}</p>`).join('');
+                        }
+                    });
+                }
+            }).catch(e => {});
+        }
+
+        setInterval(updateMonitor, 300);
+    </script>
+</body>
+</html>
